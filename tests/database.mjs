@@ -18,7 +18,7 @@ await db.exec(`
  create function realtime.send(payload jsonb,event text,topic text,private boolean default true) returns void language plpgsql as $$ begin insert into realtime.messages(extension) values('broadcast'); end $$;
  create schema storage;
  create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
- create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner_id text);
+ create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner_id text,metadata jsonb);
  alter table storage.objects enable row level security;
  grant usage on schema storage to authenticated;
  grant select,insert,delete on storage.objects to authenticated;
@@ -370,5 +370,13 @@ const { testCustomInterests } = await import("./custom-interests-checks.mjs");
 await testCustomInterests(db, { as, value, check });
 const { testGroups } = await import("./group-checks.mjs");
 await testGroups(db, { A, B, C, as, value, check });
+const { testAttachments } = await import("./attachment-checks.mjs");
+await testAttachments(db, { A, B, C, as, value, check });
+const { testChatTools } = await import("./chat-tools-checks.mjs");
+await testChatTools(db, { A, B, C, as, value, check });
+const { testDiscoveryExperience } = await import(
+  "./discovery-experience-checks.mjs"
+);
+await testDiscoveryExperience(db, { C, as, value, check });
 console.log(`Total: ${checks} database checks passed.`);
 await db.close();

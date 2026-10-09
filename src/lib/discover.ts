@@ -1,3 +1,9 @@
+import { createPreviewConnection } from "./demo";
+import type {
+  FeedbackCategory,
+  RandomConnection,
+  ConnectionDecision,
+} from "./randomExperience";
 import { supabase } from "./supabase";
 import { commonInterests, normalizeInterests } from "./interests";
 import type { Interest } from "./interests";
@@ -30,6 +36,11 @@ export type RandomState = {
   feedback_done?: boolean;
   search_interests?: Interest[];
   shared_only?: boolean;
+  connection?: RandomConnection;
+  peer_connection?: "active" | "reconnecting" | "ended";
+  peer_grace_seconds?: number;
+  end_reason?: "left" | "connection_lost" | null;
+  ended_by_you?: boolean | null;
 };
 export async function call<T>(
   name: string,
@@ -68,6 +79,7 @@ type DemoData = {
   blocked?: number[];
   votes?: Record<number, number>;
   peerIndex?: number;
+  peerAwayAt?: number;
 };
 function read(): DemoData {
   try {
@@ -171,8 +183,96 @@ export const discovery = (preview: boolean) => ({
       }
     }
   },
-  state: async (): Promise<RandomState> =>
-    preview ? data().state : call("random_state"),
+  state: async (): Promise<RandomState> => {
+    if (!preview) return call("random_state");
+    const d = data();
+    if (d.state.status === "matched" && d.peerAwayAt) {
+      const remaining = Math.max(
+        0,
+        120 - Math.floor((Date.now() - d.peerAwayAt) / 1000),
+      );
+      d.state = {
+        ...d.state,
+        peer_connection: "reconnecting",
+        peer_grace_seconds: remaining,
+      };
+      if (!remaining) {
+        d.state = {
+          ...d.state,
+          status: "ended",
+          peer_connection: "ended",
+          end_reason: "connection_lost",
+          ended_at: new Date().toISOString(),
+        };
+        d.peerAwayAt = undefined;
+        write(d);
+      }
+    }
+    return d.state;
+  },
+  heartbeat: async (): Promise<void> => {
+    if (!preview) await call("random_heartbeat");
+  },
+  connect: async (
+    session: string,
+    decision: ConnectionDecision,
+  ): Promise<RandomConnection> => {
+    if (!preview) return call("connect_random", { session, decision });
+    const d = data();
+    if (
+      d.state.session_id !== session ||
+      !["matched", "ended"].includes(d.state.status)
+    )
+      throw new Error("Conversation unavailable");
+    const c = d.state.connection || {
+      self: "none",
+      peer: "none",
+      conversation_id: null,
+    };
+    if (c.conversation_id) return c;
+    if (c.self === "declined" || c.peer === "declined")
+      throw new Error("This connection request was declined");
+    d.state.connection = { ...c, self: decision };
+    write(d);
+    return d.state.connection;
+  },
+  simulateAcceptance: async (session: string): Promise<void> => {
+    if (!preview) throw new Error("Only available in the simulated preview");
+    const d = data();
+    if (
+      d.state.session_id !== session ||
+      d.state.connection?.self !== "accepted"
+    )
+      throw new Error("Request a connection first");
+    const peer = d.state.peer!;
+    const conversation = createPreviewConnection({
+      id: `preview-connection-${d.peerIndex}`,
+      display_name: peer.anonymous ? "Riley Harper" : peer.display_name,
+      username: peer.anonymous
+        ? "riley_preview"
+        : peer.username || "preview_friend",
+      color: peer.color,
+      bio: "Fictional connection created only in this browser.",
+    });
+    d.state.connection = {
+      self: "accepted",
+      peer: "accepted",
+      conversation_id: conversation,
+    };
+    write(d);
+  },
+  simulatePresence: async (away: boolean): Promise<void> => {
+    if (!preview) throw new Error("Only available in the simulated preview");
+    const d = data();
+    if (d.state.status !== "matched") return;
+    d.peerAwayAt = away ? Date.now() : undefined;
+    d.state = {
+      ...d.state,
+      peer_connection: away ? "reconnecting" : "active",
+      peer_grace_seconds: 120,
+    };
+    write(d);
+  },
   join: async (
     anonymous: boolean,
     interests: Interest[] = [],
@@ -248,6 +348,9 @@ export const discovery = (preview: boolean) => ({
       started_at: new Date().toISOString(),
       feedback_done: false,
     };
+    d.peerAwayAt = undefined;
+    d.state.connection = { self: "none", peer: "none", conversation_id: null };
+    d.state.peer_connection = "active";
     d.messages = [
       {
         id: crypto.randomUUID(),
@@ -275,19 +378,38 @@ export const discovery = (preview: boolean) => ({
         ...d.state,
         status: "ended",
         ended_at: new Date().toISOString(),
+        end_reason: "left",
+        ended_by_you: true,
       };
       write(d);
     }
   },
-  rate: async (session: string, rating: number | null, block: boolean) => {
+  rate: async (
+    session: string,
+    rating: number | null,
+    block: boolean,
+    category: FeedbackCategory = "general",
+  ) => {
     if (!preview)
-      return call<void>("rate_random", { session, rating, block_peer: block });
+      return call<void>("submit_random_feedback", {
+        session,
+        rating,
+        category,
+        block_peer: block,
+      });
     const d = data();
     if (d.state.session_id !== session || d.state.status !== "ended")
       throw new Error("End the conversation before rating.");
-    if (rating && d.peerIndex !== undefined) {
+    const effective = ["harassment", "spam", "inappropriate"].includes(category)
+      ? 1
+      : rating;
+    if (
+      effective &&
+      d.peerIndex !== undefined &&
+      !["not_vibe", "technical"].includes(category)
+    ) {
       d.votes ||= {};
-      d.votes[d.peerIndex] = rating;
+      d.votes[d.peerIndex] = effective;
     }
     if (block && d.peerIndex !== undefined) {
       d.blocked ||= [];
@@ -354,18 +476,33 @@ export const discovery = (preview: boolean) => ({
       write(latest);
     }, 1100);
   },
-  subscribe: (userId: string, fn: () => void) => {
+  subscribe: (
+    userId: string,
+    fn: () => void,
+    onConnection?: (
+      status: "connecting" | "connected" | "reconnecting",
+    ) => void,
+  ) => {
     if (preview) {
+      onConnection?.("connected");
       window.addEventListener("kindred-discover", fn);
       return () => window.removeEventListener("kindred-discover", fn);
     }
+    onConnection?.("connecting");
+    let disposed = false;
     const c = supabase!
       .channel(`discover:${userId}`, { config: { private: true } })
       .on("broadcast", { event: "random_changed" }, fn)
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") fn();
+        if (disposed) return;
+        if (status === "SUBSCRIBED") {
+          onConnection?.("connected");
+          fn();
+        } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status))
+          onConnection?.("reconnecting");
       });
     return () => {
+      disposed = true;
       void supabase!.removeChannel(c);
     };
   },

@@ -1,3 +1,9 @@
+import { RandomConnectionPanel } from "./RandomConnection";
+import { feedbackCategories, remainingGrace } from "./lib/randomExperience";
+import type {
+  FeedbackCategory,
+  ConnectionDecision,
+} from "./lib/randomExperience";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -9,10 +15,11 @@ import {
   Shuffle,
   Sparkles,
   Star,
+  UserPlus,
   Users,
   X,
 } from "lucide-react";
-import { Avatar, Brand, Spinner } from "./components";
+import { Avatar, Brand, Spinner, Modal } from "./components";
 import { PersonaEditor, PersonaViewer } from "./Personas";
 import { discovery } from "./lib/discover";
 import {
@@ -54,10 +61,12 @@ export default function Discover({
   preview,
   userId,
   onBack,
+  onOpenConnection,
 }: {
   preview: boolean;
   userId: string;
   onBack: () => void;
+  onOpenConnection: (conversation: string) => void;
 }) {
   const service = useMemo(() => discovery(preview), [preview]);
   const [state, setState] = useState<RandomState>({ status: "idle" });
@@ -112,8 +121,18 @@ export default function Discover({
   );
   const [sending, setSending] = useState(false);
   const [viewProfile, setViewProfile] = useState<Persona | null>(null);
+  const [connectionOpen, setConnectionOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [score, setScore] = useState<number | null>(null);
+  const [category, setCategory] = useState<FeedbackCategory>("general");
+  const [liveConnection, setLiveConnection] = useState<
+    "connecting" | "connected" | "reconnecting"
+  >("connecting");
+  const [syncLost, setSyncLost] = useState(false);
+  const [stateReceivedAt, setStateReceivedAt] = useState(Date.now());
+  const [clock, setClock] = useState(Date.now());
+  const refreshFlight = useRef<{ again: boolean } | null>(null);
+  const heartbeatFlight = useRef(false);
   const [block, setBlock] = useState(false);
   const [more, setMore] = useState(false);
   const [olderBusy, setOlderBusy] = useState(false);
@@ -126,72 +145,123 @@ export default function Discover({
   const mounted = useRef(true);
   const busyRef = useRef(false);
   busyRef.current = busy;
-  const refresh = useCallback(async () => {
-    if (busyRef.current) return;
-    const request = ++seq.current;
-    try {
-      const next = await service.state();
-      let items: RandomMessage[] = [];
-      let hasMore = false;
-      if (next.session_id) {
-        let page = await service.history(next.session_id);
-        items = page;
-        const earliest =
-          stateRef.current.session_id === next.session_id
-            ? messagesRef.current[0]
-            : undefined;
-        while (
-          earliest &&
-          page.length === 100 &&
-          (page[0].created_at > earliest.created_at ||
-            (page[0].created_at === earliest.created_at &&
-              page[0].id > earliest.id))
-        ) {
-          page = await service.history(next.session_id, page[0]);
-          items = [...page, ...items];
+  const refresh = useCallback(
+    async function refreshDiscovery() {
+      if (busyRef.current) return;
+      if (refreshFlight.current) {
+        refreshFlight.current.again = true;
+        return;
+      }
+      const flight = { again: false };
+      refreshFlight.current = flight;
+      const request = ++seq.current;
+      try {
+        const next = await service.state();
+        let items: RandomMessage[] = [];
+        let hasMore = false;
+        if (next.session_id) {
+          let page = await service.history(next.session_id);
+          items = page;
+          const earliest =
+            stateRef.current.session_id === next.session_id
+              ? messagesRef.current[0]
+              : undefined;
+          while (
+            earliest &&
+            page.length === 100 &&
+            (page[0].created_at > earliest.created_at ||
+              (page[0].created_at === earliest.created_at &&
+                page[0].id > earliest.id))
+          ) {
+            page = await service.history(next.session_id, page[0]);
+            items = [...page, ...items];
+          }
+          hasMore = page.length === 100;
         }
-        hasMore = page.length === 100;
-      }
-      if (!mounted.current || request !== seq.current) return;
-      if (next.session_id !== stateRef.current.session_id) {
-        nearBottom.current = true;
-        setDraft("");
-        setScore(null);
-        setBlock(false);
-      }
-      if (next.status === "waiting" && next.search_interests) {
-        setInterests(normalizeInterests(next.search_interests));
-        setSharedOnly(next.shared_only === true);
-      }
-      setState(next);
-      setMessages(items);
-      setMore(hasMore);
-      setError("");
-      setLoaded(true);
-    } catch (e) {
-      if (mounted.current && request === seq.current) {
-        setError(errorText(e));
+        if (!mounted.current || request !== seq.current) return;
+        if (next.session_id !== stateRef.current.session_id) {
+          nearBottom.current = true;
+          setDraft("");
+          setScore(null);
+          setBlock(false);
+          setCategory("general");
+        }
+        if (next.status === "waiting" && next.search_interests) {
+          setInterests(normalizeInterests(next.search_interests));
+          setSharedOnly(next.shared_only === true);
+        }
+        setState(next);
+        setStateReceivedAt(Date.now());
+        setSyncLost(false);
+        setMessages(items);
+        setMore(hasMore);
+        setError("");
         setLoaded(true);
+      } catch (e) {
+        if (mounted.current && request === seq.current) {
+          setError(errorText(e));
+          setSyncLost(true);
+          setLoaded(true);
+        }
+      } finally {
+        if (refreshFlight.current === flight) {
+          refreshFlight.current = null;
+          if (flight.again && mounted.current && !busyRef.current)
+            void refreshDiscovery();
+        }
       }
-    }
-  }, [service]);
+    },
+    [service],
+  );
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    const unsub = service.subscribe(userId, () => void refresh());
-    const timer = setInterval(() => void refresh(), 8000);
+    const unsub = service.subscribe(
+      userId,
+      () => void refresh(),
+      setLiveConnection,
+    );
+    const heartbeat = () => {
+      if (heartbeatFlight.current || !navigator.onLine) return;
+      heartbeatFlight.current = true;
+      void service
+        .heartbeat()
+        .catch(() => {
+          if (mounted.current) setSyncLost(true);
+        })
+        .finally(() => {
+          heartbeatFlight.current = false;
+        });
+    };
+    const pulse = setInterval(heartbeat, 10000);
+    const timer = setInterval(() => {
+      if (navigator.onLine) void refresh();
+    }, 5000);
     const online = () => {
       setConnected(navigator.onLine);
-      if (navigator.onLine) void refresh();
+      if (navigator.onLine) {
+        heartbeat();
+        void refresh();
+      }
     };
     window.addEventListener("online", online);
     window.addEventListener("offline", online);
     window.addEventListener("focus", online);
+    const visible = () => {
+      if (!document.hidden) online();
+    };
+    document.addEventListener("visibilitychange", visible);
     return () => {
       mounted.current = false;
       seq.current++;
       unsub();
       clearInterval(timer);
+      clearInterval(pulse);
+      document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", online);
       window.removeEventListener("focus", online);
@@ -247,7 +317,9 @@ export default function Discover({
       return;
     }
     if (state.status === "ended") {
-      if (await act(() => service.rate(state.session_id!, score, block)))
+      if (
+        await act(() => service.rate(state.session_id!, score, block, category))
+      )
         onBack();
       return;
     }
@@ -284,8 +356,9 @@ export default function Discover({
   }
   async function finish(next: boolean) {
     await act(async () => {
-      await service.rate(state.session_id!, score, block);
+      await service.rate(state.session_id!, score, block, category);
       setScore(null);
+      setCategory("general");
       setBlock(false);
       setPending(null);
       setMessages([]);
@@ -322,6 +395,27 @@ export default function Discover({
       setOlderBusy(false);
     }
   }
+  async function respondConnection(decision: ConnectionDecision) {
+    return act(() => service.connect(state.session_id!, decision));
+  }
+  async function openConnection() {
+    const cid = state.connection?.conversation_id;
+    if (!cid) return;
+    if (
+      await act(async () => {
+        if (state.status === "matched") await service.end(state.session_id!);
+        await service.rate(state.session_id!, score, block, category);
+      })
+    ) {
+      setPending(null);
+      onOpenConnection(cid);
+    }
+  }
+  const grace = remainingGrace(
+    state.peer_grace_seconds,
+    stateReceivedAt,
+    clock,
+  );
   const matched = state.status === "matched" || state.status === "ended";
   return (
     <div className="discover-shell">
@@ -587,6 +681,13 @@ export default function Discover({
                     : "You’re visible"}
                 </span>
                 <button
+                  className="icon-button"
+                  aria-label="Connection requests"
+                  onClick={() => setConnectionOpen(true)}
+                >
+                  <UserPlus size={20} />
+                </button>
+                <button
                   className="button secondary end-button"
                   disabled={busy || state.status === "ended"}
                   onClick={() => void act(() => service.end(state.session_id!))}
@@ -595,6 +696,46 @@ export default function Discover({
                   <span>Next person</span>
                 </button>
               </header>
+              {state.status === "matched" &&
+                (!connected ||
+                  syncLost ||
+                  liveConnection !== "connected" ||
+                  state.peer_connection === "reconnecting") && (
+                  <div className="random-reconnect" role="status">
+                    {!connected
+                      ? "You’re offline. Your draft is safe; reconnect within the two-minute grace period."
+                      : syncLost
+                        ? "Having trouble reaching Kindred. Retrying; your draft is safe."
+                        : state.peer_connection === "reconnecting"
+                          ? grace > 0
+                            ? `Your partner’s connection may be interrupted. Keeping this chat open for ${grace}s while they reconnect.`
+                            : "Checking whether this chat can reconnect…"
+                          : "Live updates are reconnecting. Checking saved messages every few seconds."}
+                    <button
+                      className="text-button"
+                      onClick={() => void refresh()}
+                    >
+                      Check connection
+                    </button>
+                  </div>
+                )}
+              {preview && state.status === "matched" && (
+                <button
+                  className="preview-simulation text-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() =>
+                      service.simulatePresence(
+                        state.peer_connection !== "reconnecting",
+                      ),
+                    )
+                  }
+                >
+                  {state.peer_connection === "reconnecting"
+                    ? "Preview: simulate reconnect"
+                    : "Preview: simulate connection loss"}
+                </button>
+              )}
               <div
                 className="random-messages"
                 ref={scroll}
@@ -699,10 +840,43 @@ export default function Discover({
               {state.status === "ended" ? (
                 <section className="rating-panel">
                   <span className="eyebrow">CONVERSATION ENDED</span>
+                  <p className="random-end-reason">
+                    {state.end_reason === "connection_lost"
+                      ? "The connection did not return within two minutes. This chat has ended."
+                      : state.ended_by_you
+                        ? "You ended this conversation."
+                        : "Your partner ended this conversation."}
+                  </p>
                   <h2>How did that feel?</h2>
                   <p>
                     Only Kindred uses your feedback. Your match never sees your
                     rating.
+                  </p>
+                  <fieldset className="feedback-categories" disabled={busy}>
+                    <legend>What best describes the conversation?</legend>
+                    <div>
+                      {feedbackCategories.map((c) => (
+                        <label key={c.id}>
+                          <input
+                            type="radio"
+                            name="feedback-category"
+                            value={c.id}
+                            checked={category === c.id}
+                            onChange={() => setCategory(c.id)}
+                          />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <p className="feedback-note">
+                    {["not_vibe", "technical"].includes(category)
+                      ? "This category will not lower their matching reputation."
+                      : ["harassment", "spam", "inappropriate"].includes(
+                            category,
+                          )
+                        ? "Safety feedback contributes to private matching reputation. Repeated feedback from distinct people matters; one report does not automatically suspend anyone."
+                        : "A rating is optional. Choose “Not my vibe” for ordinary incompatibility."}
                   </p>
                   <div
                     className="star-rating"
@@ -755,7 +929,7 @@ export default function Discover({
                       onClick={() => void finish(true)}
                     >
                       {busy ? <Spinner /> : <Shuffle size={16} />}{" "}
-                      {score ? "Save & meet someone" : "Skip & meet someone"}
+                      {score || category !== "general" || block ? "Save & meet someone" : "Skip & meet someone"}
                     </button>
                   </div>
                 </section>
@@ -826,6 +1000,16 @@ export default function Discover({
                     : "Open their profile"}
                 </div>
               </button>
+              <RandomConnectionPanel
+                state={state}
+                busy={busy}
+                preview={preview}
+                onDecision={respondConnection}
+                onOpen={() => void openConnection()}
+                onSimulate={() =>
+                  void act(() => service.simulateAcceptance(state.session_id!))
+                }
+              />
               <div className="random-principle">
                 <Shield size={20} />
                 <h3>Good company starts with you.</h3>
@@ -855,6 +1039,25 @@ export default function Discover({
           </div>
         )}
       </main>
+      {connectionOpen && matched && (
+        <Modal
+          title="Connection requests"
+          onClose={() => {
+            if (!busy) setConnectionOpen(false);
+          }}
+        >
+          <RandomConnectionPanel
+            state={state}
+            busy={busy}
+            preview={preview}
+            onDecision={respondConnection}
+            onOpen={() => void openConnection()}
+            onSimulate={() =>
+              void act(() => service.simulateAcceptance(state.session_id!))
+            }
+          />
+        </Modal>
+      )}
       {viewProfile && (
         <PersonaViewer
           persona={viewProfile}

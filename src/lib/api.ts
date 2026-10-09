@@ -2,7 +2,13 @@ import { supabase } from "./supabase";
 import { demo } from "./demo";
 import { subscribeToUpdates } from "./liveUpdates";
 import type { UpdateConnection } from "./liveUpdates";
-import type { Conversation, Message, Profile, GroupInvitation } from "./types";
+import type {
+  Conversation,
+  Message,
+  Profile,
+  GroupInvitation,
+  ChatFeatures,
+} from "./types";
 function client() {
   if (!supabase)
     throw new Error("The live workspace has not been configured yet.");
@@ -69,11 +75,39 @@ export function api(preview: boolean) {
         member_ids: ids,
         group_title: title || null,
       }),
-    send: (conversation: string, id: string, body: string) =>
-      rpc<Message>("send_message", {
+    send: (
+      conversation: string,
+      id: string,
+      body: string,
+      replyTo?: string | null,
+    ) =>
+      replyTo
+        ? rpc<Message>("send_reply", {
+            conversation,
+            message_id: id,
+            message_body: body,
+            target: replyTo,
+          })
+        : rpc<Message>("send_message", {
+            conversation,
+            message_id: id,
+            message_body: body,
+          }),
+    features: (conversation: string, ids: string[]) =>
+      rpc<ChatFeatures>("chat_features", { conversation, message_ids: ids }),
+    react: (message: string, emoji: string, enabled: boolean) =>
+      rpc<void>("set_message_reaction", {
+        message_id: message,
+        reaction: emoji,
+        enabled,
+      }),
+    pin: (message: string, enabled: boolean) =>
+      rpc<void>("set_message_pin", { message_id: message, enabled }),
+    preferences: (conversation: string, muted: boolean, archived: boolean) =>
+      rpc<void>("set_conversation_preferences", {
         conversation,
-        message_id: id,
-        message_body: body,
+        mute: muted,
+        archive: archived,
       }),
     read: (conversation: string, through: string) =>
       rpc<void>("mark_read", { conversation, read_through: through }),

@@ -13,6 +13,15 @@ export type Member = Profile & {
   role?: "owner" | "admin" | "member";
 };
 export type Message = {
+  reply_to?: string | null;
+  pinned_at?: string | null;
+  pinned_by?: string | null;
+  attachment?: {
+    path: string;
+    name: string;
+    size: number;
+    mime: string;
+  } | null;
   id: string;
   conversation_id: string;
   sender_id: string;
@@ -23,6 +32,8 @@ export type Message = {
   status?: "sending" | "failed";
 };
 export type Conversation = {
+  muted?: boolean;
+  archived?: boolean;
   id: string;
   kind: "direct" | "group";
   title: string | null;
@@ -83,3 +94,10 @@ export type GroupInvitation = {
   inviter: string;
   status: string;
 };
+
+export type ChatFeatures = {
+  reactions: { message_id: string; user_id: string; emoji: string }[];
+  replies: Message[];
+  pins: Message[];
+};
+export const REACTIONS = ["❤️", "👍", "😂", "😮", "😢", "🙌"] as const;

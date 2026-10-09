@@ -1,5 +1,11 @@
-import type { Conversation, Message, Profile, GroupInvitation } from "./types";
-import { validMessage } from "./types";
+import type {
+  Conversation,
+  Message,
+  Profile,
+  GroupInvitation,
+  ChatFeatures,
+} from "./types";
+import { validMessage, REACTIONS } from "./types";
 import type { UpdateConnection } from "./liveUpdates";
 const KEY = "kindred-preview-v1";
 export const demoUser: Profile = {
@@ -14,6 +20,7 @@ type Data = {
   conversations: Conversation[];
   messages: Message[];
   invitations?: GroupInvitation[];
+  reactions?: ChatFeatures["reactions"];
 };
 const ago = (minutes: number) =>
   new Date(Date.now() - minutes * 60000).toISOString();
@@ -407,7 +414,12 @@ export const demo = {
     save(d);
     return id;
   },
-  send: async (conversation: string, id: string, body: string) => {
+  send: async (
+    conversation: string,
+    id: string,
+    body: string,
+    replyTo?: string | null,
+  ) => {
     if (!validMessage(body))
       throw new Error("Messages must contain 1–4000 characters.");
     const d = read();
@@ -417,6 +429,7 @@ export const demo = {
       id,
       conversation_id: conversation,
       sender_id: demoUser.id,
+      reply_to: replyTo || null,
       body: body.trim(),
       created_at: new Date().toISOString(),
       edited_at: null,
@@ -427,6 +440,73 @@ export const demo = {
       m.created_at;
     save(d);
     return m;
+  },
+  features: async (
+    conversation: string,
+    ids: string[],
+  ): Promise<ChatFeatures> => {
+    const d = read();
+    const visible = d.messages.filter(
+      (m) => m.conversation_id === conversation,
+    );
+    const targets = new Set(
+      visible
+        .filter((m) => ids.includes(m.id) && !m.deleted_at)
+        .map((m) => m.reply_to),
+    );
+    return {
+      replies: visible.filter((m) => targets.has(m.id)),
+      pins: visible.filter((m) => m.pinned_at && !m.deleted_at),
+      reactions: (d.reactions || []).filter(
+        (r) =>
+          visible.some((m) => m.id === r.message_id && !m.deleted_at) &&
+          ids.includes(r.message_id),
+      ),
+    };
+  },
+  react: async (id: string, emoji: string, enabled: boolean) => {
+    const d = read();
+    if (!REACTIONS.includes(emoji as (typeof REACTIONS)[number]))
+      throw new Error("Invalid reaction");
+    d.reactions = (d.reactions || []).filter(
+      (r) =>
+        !(
+          r.message_id === id &&
+          r.user_id === demoUser.id &&
+          r.emoji === emoji
+        ),
+    );
+    if (enabled)
+      d.reactions.push({ message_id: id, user_id: demoUser.id, emoji });
+    save(d);
+  },
+  pin: async (id: string, enabled: boolean) => {
+    const d = read();
+    const m = d.messages.find((m) => m.id === id && !m.deleted_at);
+    if (!m) throw new Error("Message unavailable");
+    const c = d.conversations.find((c) => c.id === m.conversation_id)!;
+    const role = c.members.find((p) => p.id === demoUser.id)?.role;
+    if (c.kind === "group" && role !== "owner" && role !== "admin")
+      throw new Error("Only owners and admins can pin group messages");
+    if (
+      enabled &&
+      !m.pinned_at &&
+      d.messages.filter(
+        (x) => x.conversation_id === c.id && x.pinned_at && !x.deleted_at,
+      ).length >= 20
+    )
+      throw new Error("Maximum 20 pins");
+    m.pinned_at = enabled ? new Date().toISOString() : null;
+    m.pinned_by = enabled ? demoUser.id : null;
+    save(d);
+  },
+  preferences: async (id: string, muted: boolean, archived: boolean) => {
+    const d = read();
+    const c = d.conversations.find((c) => c.id === id);
+    if (!c) throw new Error("Conversation unavailable");
+    c.muted = muted;
+    c.archived = archived;
+    save(d);
   },
   read: async (conversation: string, through: string) => {
     const d = read();
@@ -474,3 +554,29 @@ export const demo = {
     };
   },
 };
+
+// Only fictional preview profiles enter this local-only connection flow.
+export function createPreviewConnection(person: Profile): string {
+  const d = read();
+  if (!d.profiles.some((p) => p.id === person.id)) d.profiles.push(person);
+  const existing = d.conversations.find(
+    (c) => c.kind === "direct" && c.members.some((m) => m.id === person.id),
+  );
+  if (existing) return existing.id;
+  const id = crypto.randomUUID();
+  d.conversations.push({
+    id,
+    kind: "direct",
+    title: null,
+    members: [demoUser, person].map((p) => ({
+      ...p,
+      last_read_at: new Date().toISOString(),
+      role: "member" as const,
+    })),
+    last_message: null,
+    unread: 0,
+    updated_at: new Date().toISOString(),
+  });
+  save(d);
+  return id;
+}

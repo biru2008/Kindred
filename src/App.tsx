@@ -1,8 +1,22 @@
+import {
+  emptyFeatures,
+  canPin,
+  QuotedMessage,
+  ReactionBar,
+  PinnedMessages,
+  MessagePeek,
+} from "./ChatFeatures";
 import { InvitationInbox } from "./GroupManagement";
+import { AttachmentComposer, AttachmentView } from "./Attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
+  Archive,
+  BellOff,
+  Bell,
+  Pin,
+  Reply,
   ArrowDown,
   ArrowLeft,
   Check,
@@ -33,8 +47,14 @@ import { notifySavedMessage } from "./lib/liveUpdates";
 import { useChatTools } from "./lib/webmcp";
 import { demoUser } from "./lib/demo";
 import { isConfigured, supabase } from "./lib/supabase";
-import type { Conversation, Message, Profile } from "./lib/types";
-import { errorText, mergeMessages, titleOf, validMessage } from "./lib/types";
+import type { Conversation, Message, Profile, ChatFeatures } from "./lib/types";
+import {
+  errorText,
+  mergeMessages,
+  titleOf,
+  validMessage,
+  REACTIONS,
+} from "./lib/types";
 import {
   Auth,
   Avatar,
@@ -87,6 +107,9 @@ function getDraft(key: string) {
 }
 
 export default function App() {
+  const [requestedConversation, setRequestedConversation] = useState<
+    string | null
+  >(null);
   const [surface, setSurface] = useState<"messages" | "discover">("messages");
   const [preview, setPreview] = useState(
     () =>
@@ -168,6 +191,10 @@ export default function App() {
         preview={preview}
         userId={preview ? demoUser.id : userId!}
         onBack={() => setSurface("messages")}
+        onOpenConnection={(id) => {
+          setRequestedConversation(id);
+          setSurface("messages");
+        }}
       />
     ) : (
       <Workspace
@@ -175,7 +202,11 @@ export default function App() {
         preview={preview}
         userId={preview ? demoUser.id : userId!}
         onExit={exit}
-        onDiscover={() => setSurface("discover")}
+        initialConversation={requestedConversation}
+        onDiscover={() => {
+          setRequestedConversation(null);
+          setSurface("discover");
+        }}
       />
     );
   return preview ? (
@@ -192,11 +223,13 @@ function Workspace({
   userId,
   onExit,
   onDiscover,
+  initialConversation,
 }: {
   preview: boolean;
   userId: string;
   onExit: () => Promise<void>;
   onDiscover: () => void;
+  initialConversation?: string | null;
 }) {
   const service = useMemo(() => api(preview), [preview]);
   const outbox = useRef<Message[]>(readOutbox(userId));
@@ -223,8 +256,16 @@ function Workspace({
   const [loadError, setLoadError] = useState("");
   const [messageError, setMessageError] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "unread" | "circles">("all");
+  const [filter, setFilter] = useState<
+    "all" | "unread" | "circles" | "archived"
+  >("all");
   const [modal, setModal] = useState<"new" | "profile" | "help" | null>(null);
+  const [replying, setReplying] = useState<Message | null>(null);
+  const [features, setFeatures] = useState<ChatFeatures>(emptyFeatures);
+  const [featureError, setFeatureError] = useState("");
+  const [featureBusy, setFeatureBusy] = useState(false);
+  const featureFlight = useRef(false);
+  const [peek, setPeek] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -286,7 +327,10 @@ function Workspace({
         setActive((current) =>
           current && items.some((c) => c.id === current)
             ? current
-            : items[0]?.id || null,
+            : initialConversation &&
+                items.some((c) => c.id === initialConversation)
+              ? initialConversation
+              : items.find((c) => !c.archived)?.id || null,
         );
       } catch (e) {
         if (seq === refreshSeq.current) setLoadError(errorText(e));
@@ -299,7 +343,7 @@ function Workspace({
         }
       }
     },
-    [service],
+    [service, initialConversation],
   );
   const refreshMessages = useCallback(
     async function refreshHistory(id: string, _replace = false) {
@@ -345,6 +389,24 @@ function Workspace({
         );
         setHasMore(page.length === 50);
         setMessageError("");
+        try {
+          const extras = await service.features(
+            id,
+            items
+              .filter((m) => !m.status)
+              .map((m) => m.id)
+              .slice(0, 1000),
+          );
+          if (activeRef.current === id && seq === requestSeq.current) {
+            setFeatures(extras);
+            setFeatureError("");
+          }
+        } catch (e) {
+          if (activeRef.current === id && seq === requestSeq.current)
+            setFeatureError(
+              "Couldn’t load reactions, replies, or pins. Check your connection and the Supabase chat-tools update.",
+            );
+        }
       } catch (e) {
         if (activeRef.current === id && seq === requestSeq.current)
           setMessageError(errorText(e));
@@ -434,6 +496,10 @@ function Workspace({
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
+    setReplying(null);
+    setPeek(null);
+    setFeatures(emptyFeatures);
+    setFeatureError("");
     setMessages(outbox.current.filter((m) => m.conversation_id === active));
     messagesRef.current = [];
     setMessageError("");
@@ -636,7 +702,12 @@ function Workspace({
   }
   async function deliver(id: string, body: string, conversation: string) {
     try {
-      const sent = await service.send(conversation, id, body);
+      const sent = await service.send(
+        conversation,
+        id,
+        body,
+        outbox.current.find((m) => m.id === id)?.reply_to,
+      );
       void notifySavedMessage(channel.current, conversation);
       outbox.current = outbox.current.filter((m) => m.id !== id);
       saveOutbox();
@@ -668,12 +739,14 @@ function Workspace({
       edited_at: null,
       deleted_at: null,
       status: "sending",
+      reply_to: replying?.id || null,
     };
     outbox.current.push(m);
     saveOutbox();
     nearBottom.current = true;
     setMessages((old) => mergeMessages(old, [m]));
     updateDraft("");
+    setReplying(null);
     setEmojiOpen(false);
     if (channel.current)
       void channel.current.send({
@@ -733,9 +806,47 @@ function Workspace({
     [userId],
   );
   useChatTools(conversations, userId, stageMessage);
+  async function changeFeature(
+    task: () => Promise<void>,
+    conversation: string,
+  ) {
+    if (featureFlight.current) return;
+    featureFlight.current = true;
+    setFeatureBusy(true);
+    try {
+      await task();
+      void notifySavedMessage(channel.current, conversation);
+      void refresh();
+      if (activeRef.current === conversation)
+        await refreshMessages(conversation);
+    } catch (e) {
+      notify(errorText(e));
+    } finally {
+      featureFlight.current = false;
+      setFeatureBusy(false);
+    }
+  }
+  function reactTo(m: Message, emoji: string, enabled: boolean) {
+    void changeFeature(
+      () => service.react(m.id, emoji, enabled),
+      m.conversation_id,
+    );
+  }
+  function pinMessage(m: Message, enabled: boolean) {
+    void changeFeature(() => service.pin(m.id, enabled), m.conversation_id);
+  }
+  function changePreferences(
+    c: Conversation,
+    muted: boolean,
+    archived: boolean,
+  ) {
+    void changeFeature(() => service.preferences(c.id, muted, archived), c.id);
+  }
   const list = conversations.filter(
     (c) =>
+      (filter === "archived" ? Boolean(c.archived) : !c.archived) &&
       (filter === "all" ||
+        filter === "archived" ||
         (filter === "unread" && c.unread > 0) ||
         (filter === "circles" && c.kind === "group")) &&
       `${titleOf(c, userId)} ${c.members.map((m) => m.username).join(" ")}`
@@ -750,7 +861,10 @@ function Workspace({
   const someoneOnline = activeConversation?.members.some(
     (p) => p.id !== userId && present.includes(p.id),
   );
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unread, 0);
+  const totalUnread = conversations.reduce(
+    (sum, c) => sum + (c.muted || c.archived ? 0 : c.unread),
+    0,
+  );
   const lastOwn = messages.filter((m) => m.sender_id === userId).at(-1)?.id;
   useEffect(() => {
     document.title = totalUnread
@@ -873,14 +987,20 @@ function Workspace({
               )}
             </div>
             <div className="filter-tabs" aria-label="Filter conversations">
-              {(["all", "unread", "circles"] as const).map((f) => (
+              {(["all", "unread", "circles", "archived"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
                   aria-pressed={f === filter}
                   className={f === filter ? "selected" : ""}
                 >
-                  {f === "all" ? "All" : f === "unread" ? "Unread" : "Circles"}
+                  {f === "all"
+                    ? "All"
+                    : f === "unread"
+                      ? "Unread"
+                      : f === "archived"
+                        ? "Archived"
+                        : "Circles"}
                   {f === "unread" && totalUnread > 0 && (
                     <span>{totalUnread}</span>
                   )}
@@ -919,7 +1039,9 @@ function Workspace({
                       ? "All caught up"
                       : filter === "circles"
                         ? "Your circle starts here"
-                        : "Say your first hello"}
+                        : filter === "archived"
+                          ? "No archived conversations"
+                          : "Say your first hello"}
                 </h3>
                 <p>
                   {query
@@ -951,7 +1073,10 @@ function Workspace({
                     <Avatar person={person} group={c.kind === "group"} />
                     <div className="conversation-text">
                       <div>
-                        <strong>{titleOf(c, userId)}</strong>
+                        <strong>
+                          {titleOf(c, userId)}
+                          {c.muted && <BellOff size={12} aria-label="Muted" />}
+                        </strong>
                         <time>
                           {c.last_message
                             ? shortDate(c.last_message.created_at)
@@ -1041,6 +1166,68 @@ function Workspace({
                   </span>
                 </div>
                 <div className="header-actions">
+                  <PinnedMessages
+                    key={active}
+                    features={features}
+                    conversation={activeConversation}
+                    canManage={canPin(activeConversation, userId)}
+                    busy={featureBusy}
+                    onPin={pinMessage}
+                    onOpen={setPeek}
+                  />
+                  <button
+                    type="button"
+                    className={`icon-button ${activeConversation.muted ? "pressed" : ""}`}
+                    disabled={featureBusy}
+                    aria-label={
+                      activeConversation.muted
+                        ? "Unmute conversation"
+                        : "Mute conversation"
+                    }
+                    title={
+                      activeConversation.muted
+                        ? "Unmute conversation"
+                        : "Mute: exclude from total unread badge"
+                    }
+                    aria-pressed={Boolean(activeConversation.muted)}
+                    onClick={() =>
+                      changePreferences(
+                        activeConversation,
+                        !activeConversation.muted,
+                        Boolean(activeConversation.archived),
+                      )
+                    }
+                  >
+                    {activeConversation.muted ? (
+                      <BellOff size={19} />
+                    ) : (
+                      <Bell size={19} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className={`icon-button ${activeConversation.archived ? "pressed" : ""}`}
+                    disabled={featureBusy}
+                    aria-label={
+                      activeConversation.archived
+                        ? "Unarchive conversation"
+                        : "Archive conversation"
+                    }
+                    title={
+                      activeConversation.archived
+                        ? "Move back to All"
+                        : "Move to Archived"
+                    }
+                    onClick={() =>
+                      changePreferences(
+                        activeConversation,
+                        Boolean(activeConversation.muted),
+                        !activeConversation.archived,
+                      )
+                    }
+                  >
+                    <Archive size={19} />
+                  </button>
                   <button
                     className={`icon-button ${showSearch ? "pressed" : ""}`}
                     onClick={() => setShowSearch((v) => !v)}
@@ -1059,6 +1246,32 @@ function Workspace({
                   </button>
                 </div>
               </header>
+              {featureError && (
+                <div className="sync-warning" role="status">
+                  {featureError}
+                  <button
+                    onClick={() => active && void refreshMessages(active)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              {(activeConversation.muted || activeConversation.archived) && (
+                <div className="conversation-state">
+                  {activeConversation.muted && (
+                    <span>
+                      <BellOff size={14} />
+                      Muted · excluded from total unread badge
+                    </span>
+                  )}
+                  {activeConversation.archived && (
+                    <span>
+                      <Archive size={14} />
+                      Archived · new messages stay here until you unarchive
+                    </span>
+                  )}
+                </div>
+              )}
               {(!online ||
                 (!preview &&
                   (connection === "reconnecting" ||
@@ -1229,7 +1442,7 @@ function Workspace({
                         .filter((p) => p.id !== userId)
                         .every((p) => p.last_read_at >= m.created_at);
                       return (
-                        <div key={m.id}>
+                        <div key={m.id} id={`message-${m.id}`}>
                           {newDay && (
                             <div className="date-divider">
                               <span>{dayLabel(m.created_at)}</span>
@@ -1260,7 +1473,41 @@ function Workspace({
                                       <Trash2 size={14} /> Message deleted
                                     </>
                                   ) : (
-                                    m.body
+                                    <>
+                                      {m.reply_to &&
+                                        (() => {
+                                          const parent =
+                                            features.replies.find(
+                                              (p) => p.id === m.reply_to,
+                                            ) ||
+                                            messages.find(
+                                              (p) => p.id === m.reply_to,
+                                            );
+                                          return parent ? (
+                                            <QuotedMessage
+                                              message={parent}
+                                              conversation={activeConversation}
+                                              onOpen={() => setPeek(parent)}
+                                            />
+                                          ) : (
+                                            <small className="reply-unavailable">
+                                              Reply to an earlier message
+                                            </small>
+                                          );
+                                        })()}
+                                      {m.pinned_at && (
+                                        <small className="pin-label">
+                                          <Pin size={12} />
+                                          Pinned
+                                        </small>
+                                      )}
+                                      {m.attachment && (
+                                        <AttachmentView
+                                          attachment={m.attachment}
+                                        />
+                                      )}
+                                      <span>{m.body}</span>
+                                    </>
                                   )}
                                 </div>
                                 {!m.deleted_at && !m.status && (
@@ -1276,6 +1523,57 @@ function Workspace({
                                     </button>
                                     {menu === m.id && (
                                       <div className="message-menu">
+                                        <button
+                                          onClick={() => {
+                                            setReplying(m);
+                                            setMenu(null);
+                                            composerRef.current?.focus();
+                                          }}
+                                        >
+                                          <Reply size={14} /> Reply
+                                        </button>
+                                        <div
+                                          className="reaction-picker"
+                                          aria-label="Add a reaction"
+                                        >
+                                          {REACTIONS.map((emoji) => {
+                                            const reacted =
+                                              features.reactions.some(
+                                                (r) =>
+                                                  r.message_id === m.id &&
+                                                  r.user_id === userId &&
+                                                  r.emoji === emoji,
+                                              );
+                                            return (
+                                              <button
+                                                type="button"
+                                                key={emoji}
+                                                aria-label={`${reacted ? "Remove" : "Add"} ${emoji} reaction`}
+                                                aria-pressed={reacted}
+                                                disabled={featureBusy}
+                                                onClick={() => {
+                                                  reactTo(m, emoji, !reacted);
+                                                  setMenu(null);
+                                                }}
+                                              >
+                                                {emoji}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                        {canPin(activeConversation, userId) && (
+                                          <button
+                                            disabled={featureBusy}
+                                            onClick={() => {
+                                              pinMessage(m, !m.pinned_at);
+                                              setMenu(null);
+                                            }}
+                                          >
+                                            <Pin size={14} />
+                                            {m.pinned_at ? "Unpin" : "Pin"}{" "}
+                                            message
+                                          </button>
+                                        )}
                                         <button
                                           onClick={() => {
                                             void navigator.clipboard
@@ -1319,6 +1617,15 @@ function Workspace({
                                   </div>
                                 )}
                               </div>
+                              <ReactionBar
+                                message={m}
+                                user={userId}
+                                features={features}
+                                busy={featureBusy}
+                                onReact={(emoji, enabled) =>
+                                  reactTo(m, emoji, enabled)
+                                }
+                              />
                               {(endGroup || m.status || m.edited_at) && (
                                 <div className="message-meta">
                                   <time>{time(m.created_at)}</time>
@@ -1388,7 +1695,46 @@ function Workspace({
                   <ArrowDown size={15} /> Latest messages
                 </button>
               )}
+              {peek && (
+                <MessagePeek
+                  key={peek.id}
+                  message={
+                    messages.find((m) => m.id === peek.id) ||
+                    features.replies.find((m) => m.id === peek.id) ||
+                    features.pins.find((m) => m.id === peek.id) ||
+                    peek
+                  }
+                  conversation={activeConversation}
+                  onClose={() => setPeek(null)}
+                  onJump={() => {
+                    const node = document.getElementById(`message-${peek.id}`);
+                    if (!node) return false;
+                    node.scrollIntoView({
+                      behavior: "smooth",
+                      block: "center",
+                    });
+                    return true;
+                  }}
+                />
+              )}
               <footer className="composer-area">
+                {replying && (
+                  <div className="reply-draft">
+                    <QuotedMessage
+                      message={
+                        messages.find((m) => m.id === replying.id) || replying
+                      }
+                      conversation={activeConversation}
+                    />
+                    <button
+                      className="icon-button"
+                      aria-label="Cancel reply"
+                      onClick={() => setReplying(null)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                )}
                 <form className="composer" onSubmit={send}>
                   <textarea
                     ref={composerRef}
@@ -1414,6 +1760,23 @@ function Workspace({
                     placeholder={`Message ${activeConversation.kind === "group" ? "the circle" : other?.display_name.split(" ")[0] || ""}…`}
                   />
                   <div className="composer-tools">
+                    <AttachmentComposer
+                      key={active}
+                      conversation={active!}
+                      userId={userId}
+                      preview={preview}
+                      replyTo={replying?.id}
+                      onSent={(message) => {
+                        setReplying(null);
+                        void notifySavedMessage(
+                          channel.current,
+                          message.conversation_id,
+                        );
+                        if (activeRef.current === message.conversation_id)
+                          setMessages((old) => mergeMessages(old, [message]));
+                        void refresh();
+                      }}
+                    />
                     <div className="emoji-control">
                       <button
                         type="button"

@@ -76,6 +76,8 @@ export function subscribeToUpdates(
         "conversation_members",
         "profiles",
         "group_invitations",
+        "message_reactions",
+        "conversation_preferences",
       ])
         channel.on(
           "postgres_changes",

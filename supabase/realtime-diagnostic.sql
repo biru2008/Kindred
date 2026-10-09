@@ -8,7 +8,7 @@ select expected.table_name,
        c.relrowsecurity as row_security,
        has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_can_select
 from (values ('messages'), ('conversations'), ('conversation_members'),
-             ('profiles'), ('group_invitations')) as expected(table_name)
+             ('profiles'), ('group_invitations'), ('message_reactions'), ('conversation_preferences')) as expected(table_name)
 left join pg_namespace n on n.nspname='public'
 left join pg_class c on c.relnamespace=n.oid and c.relname=expected.table_name
 order by expected.table_name;
