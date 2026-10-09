@@ -1,5 +1,6 @@
 import type { Conversation, Message, Profile, GroupInvitation } from "./types";
 import { validMessage } from "./types";
+import type { UpdateConnection } from "./liveUpdates";
 const KEY = "kindred-preview-v1";
 export const demoUser: Profile = {
   id: "demo-me",
@@ -463,7 +464,8 @@ export const demo = {
     Object.assign(p, { display_name: name.trim(), bio: bio.trim(), color });
     save(d);
   },
-  subscribe: (fn: () => void) => {
+  subscribe: (fn: () => void, onState?: (state: UpdateConnection) => void) => {
+    onState?.("connected");
     window.addEventListener("storage", fn);
     window.addEventListener("kindred-demo", fn);
     return () => {

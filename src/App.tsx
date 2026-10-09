@@ -100,10 +100,11 @@ export default function App() {
   useEffect(() => {
     if (!supabase) return;
     let active = true;
+    let authEventReceived = false;
     supabase.auth
       .getSession()
       .then(({ data }) => {
-        if (active) {
+        if (active && !authEventReceived) {
           setUserId(data.session?.user.id || null);
           setReady(true);
         }
@@ -112,6 +113,8 @@ export default function App() {
         if (active) setReady(true);
       });
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      authEventReceived = true;
       setUserId(session?.user.id || null);
       setReady(true);
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
@@ -152,7 +155,7 @@ export default function App() {
       setSurface("messages");
       return;
     }
-    const { error } = await supabase!.auth.signOut();
+    const { error } = await supabase!.auth.signOut({ scope: "local" });
     if (error) throw error;
     setUserId(null);
     setSurface("messages");
@@ -230,6 +233,7 @@ function Workspace({
   const [mobileChat, setMobileChat] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [connection, setConnection] = useState("connecting");
+  const [updateConnection, setUpdateConnection] = useState("connecting");
   const [typing, setTyping] = useState<Record<string, number>>({});
   const [present, setPresent] = useState<string[]>([]);
   const channel = useRef<RealtimeChannel | null>(null);
@@ -323,22 +327,31 @@ function Workspace({
   );
   useEffect(() => {
     void refresh();
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let updatesReady = false;
+    let lastReconcile = Date.now();
     const unsub = service.subscribe(() => {
-      clearTimeout(timer);
+      // Coalesce bursts without postponing delivery indefinitely during activity.
+      if (timer) return;
       timer = setTimeout(() => {
+        timer = undefined;
         void refresh();
         if (activeRef.current) void refreshMessages(activeRef.current);
       }, 100);
+    }, (state) => {
+      updatesReady = state === "connected";
+      setUpdateConnection(state);
     });
     const focus = () => {
+      lastReconcile = Date.now();
       void refresh();
       if (activeRef.current) void refreshMessages(activeRef.current);
     };
     window.addEventListener("focus", focus);
     const interval = setInterval(() => {
-      if (!document.hidden && navigator.onLine) focus();
-    }, 30000);
+      const interval = updatesReady ? 30000 : 5000;
+      if (!document.hidden && navigator.onLine && Date.now() - lastReconcile >= interval) focus();
+    }, 5000);
     return () => {
       unsub();
       clearTimeout(timer);
@@ -976,12 +989,14 @@ function Workspace({
                   </button>
                 </div>
               </header>
-              {(!online || (!preview && connection === "reconnecting")) && (
+              {(!online || (!preview && (connection === "reconnecting" || updateConnection !== "connected"))) && (
                 <div className="connection-banner" role="status">
                   <WifiOff size={16} />
                   {!online
                     ? "You’re offline. Failed messages can be retried when you reconnect."
-                    : "Reconnecting to live updates. Your saved messages are safe."}
+                    : updateConnection !== "connected"
+                      ? "Connecting to live messages. Checking for new messages every few seconds."
+                      : "Reconnecting to live updates. Your saved messages are safe."}
                 </div>
               )}
               {showSearch && (

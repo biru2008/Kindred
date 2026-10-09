@@ -1,5 +1,7 @@
 import { supabase } from "./supabase";
 import { demo } from "./demo";
+import { subscribeToUpdates } from "./liveUpdates";
+import type { UpdateConnection } from "./liveUpdates";
 import type { Conversation, Message, Profile, GroupInvitation } from "./types";
 function client() {
   if (!supabase)
@@ -84,36 +86,7 @@ export function api(preview: boolean) {
         new_bio: bio,
         new_color: color,
       }),
-    subscribe: (fn: () => void) => {
-      let c: ReturnType<ReturnType<typeof client>["channel"]> | undefined;
-      let disposed = false;
-      void client()
-        .auth.getSession()
-        .then(({ data }) => {
-          if (disposed || !data.session) return;
-          c = client().channel(`updates:${data.session.user.id}`, {
-            config: { private: true },
-          });
-          for (const table of [
-            "messages",
-            "conversations",
-            "conversation_members",
-            "profiles",
-            "group_invitations",
-          ])
-            c.on(
-              "postgres_changes",
-              { event: "*", schema: "public", table },
-              fn,
-            );
-          c.subscribe((status) => {
-            if (status === "SUBSCRIBED") fn();
-          });
-        });
-      return () => {
-        disposed = true;
-        if (c) void client().removeChannel(c);
-      };
-    },
+    subscribe: (fn: () => void, onState?: (state: UpdateConnection) => void) =>
+      subscribeToUpdates(client(), fn, onState),
   };
 }

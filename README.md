@@ -1,100 +1,157 @@
 # Kindred
 
-A calm, responsive real-time chat application for **First Commit**. Built with React, TypeScript, Vite, and Supabase. Deploy the frontend to Vercel.
+Kindred is a real-time, web-based chat application built for the **First Commit hackathon by Kamand Prompt, IIT Mandi**. It combines private direct messages and managed group conversations with interest-based stranger matching and separate anonymous profiles.
 
-## What is included
+The current application uses **email and password authentication only**. Phone sign-up and SMS verification are not part of this release.
 
-- Email/password sign-up and sign-in. Each account belongs to a unique email address; email confirmation is required before accessing the workspace. No phone number or SMS provider is needed.
-- One-click random text conversations, with anonymous or regular identity chosen before matching.
-- Choose up to five interests from 16 suggestions or create your own tags; shared interests are prioritized, with an optional shared-interest-only filter.
-- Peach and rose pink, matcha green, and cream styling with Fraunces headings and Nunito Sans body text.
-- Separate anonymous and regular names, bios/interests/vibes, colors, and uploaded profile songs.
-- Private conversation ratings that influence future matching, plus blocking and a 24-hour repeat-match exclusion.
-- Persistent sessions, email confirmation, password reset, and sign-out.
-- Private one-to-one conversations and small group conversations (“circles”, up to 20 people).
-- Persistent messages with Supabase Postgres and WebSocket updates.
-- Membership-based access controls enforced in the database.
-- Typing indicators and presence within the current conversation.
-- Unread counts and read receipts; opening a conversation does not mark unseen messages below the viewport as read.
-- Safe message retries, message editing, soft deletion, and paginated history.
-- Conversation search, full-history message search, editable profiles, and an emoji picker.
-- Per-conversation drafts and failed sends retained in the current browser tab/session.
-- Responsive phone/desktop layouts, keyboard controls, reduced-motion support, and accessible modal dialogs.
-- Optional browser WebMCP tools for listing conversations and staging a draft. They do not send messages.
+## Features
 
-Without environment variables, the application opens a **clearly labeled preview**. Its sample people are fictional; nothing is delivered to another person. Preview data is stored only in this browser. Preview accounts are not real authentication and are separate from the live service.
+### Accounts and profiles
 
-## Add custom tags to an existing deployed app
+- Email/password registration, confirmation, sign-in, sign-out, persistent sessions, and password reset.
+- Separate regular and anonymous names, bios, profile colors, and optional uploaded songs.
+- Regular profiles show display name, username, bio, color, and song; email addresses are not included in other users' profile responses.
+- Profile audio supports MP3, OGG, WAV, and M4A, up to 10 MB. Browser autoplay restrictions may require pressing Play.
 
-If migrations 001–003 are already installed, run **only** `supabase/migrations/004_custom_interests.sql` once in Supabase's SQL Editor, then deploy this updated source through your connected GitHub/Vercel project. If you have not installed 003 yet, apply 003 before 004. Do not rerun earlier migrations.
+### Private messages
 
-The Add your own interest field accepts 2–30 English letters or numbers, with spaces and hyphens between them. Custom tags share the five-tag limit with suggestions. Press Enter or Add to select a tag; use the × on its chip to remove it. Tags are normalized on both client and server: case and repeated whitespace are ignored, duplicate interests are rejected by the input, and entering a suggested tag uses its existing label. Different words still represent different interests. The matching rules, strict filter, rating bands, blocking, and account privacy continue to apply. Existing chats keep their original snapshots.
+- One-to-one conversations between registered users.
+- Persistent message history and live updates through Supabase Realtime.
+- Typing indicators, presence, read receipts, and unread counts.
+- Conversation search, message search, paginated history, editing, and soft deletion of your own messages.
+- Optimistic sending, retry deduplication, emoji selection, and per-conversation drafts.
+- Drafts and failed sends are retained in the current browser tab's session storage.
 
-## Update an existing deployed app with interest tags
+### Circles: private groups
 
-If you already ran migrations 001 and 002, run **only** `supabase/migrations/003_interests.sql` in your existing Supabase project's SQL Editor, once. Do not rerun the original setup. This adds private interest preferences to the match queue, validates selections, prioritizes overlapping tags, and supports strict shared-interest matching. Existing users, messages, ratings, and profile data are preserved; ongoing conversations keep their existing snapshots.
+- Named groups with a maximum of 20 people, counting pending invitations toward capacity.
+- The creator becomes the owner; selected people receive invitations instead of automatically joining.
+- Recipients can accept or decline invitations. Acceptance grants access to the group's existing history.
+- Owners can promote or demote admins and transfer ownership.
+- Owners and admins can invite people, revoke pending invitations, and remove regular members.
+- Only owners can remove admins. Admins cannot remove owners or change roles.
+- Members can leave; an owner must transfer ownership first.
+- All permissions are enforced in the database, not only through visible controls.
 
-Apply 003 before deploying this updated frontend. The migration keeps the previous one-argument matching RPC working, so the current frontend continues to work during the change. Then update the application files in your GitHub repository and deploy through Vercel as usual. No new environment variables, paid service, or account is needed. When testing strict matching with two users, select a common tag on both; existing blocks and the 24-hour repeat-match exclusion still apply.
+### Meet someone
 
-For a fresh project, run migrations 001, 002, 003, and 004 in order instead.
+- Random text conversations using either your regular or anonymous identity.
+- Select up to five interests from suggested tags or add custom tags.
+- Custom tags accept 2–30 English letters/numbers with internal spaces or hyphens. Case and repeated whitespace are normalized.
+- Matching prioritizes shared interests, with an optional shared-interest-only setting.
+- Private conversation ratings affect future matching eligibility; ratings are not public.
+- Blocking prevents matching in either direction. Recent pairs are excluded for 24 hours.
+- Anonymous matches use a fresh session persona ID and do not expose the underlying account ID or regular profile link.
 
-## 1. Run the local preview
+### Interface
 
-Install Node.js 22.13+ (24 LTS is also suitable) and pnpm 11.25.0. Then, from this folder:
+- Responsive desktop/mobile layouts, keyboard controls, reduced-motion support, and accessible dialogs.
+- Peach, coral, rose, berry, and plum palette: `#FFBB94`, `#FB9590`, `#DC586D`, `#A33757`, `#852E4E`.
+- Fraunces headings and Nunito Sans body text, with system font fallbacks.
+- Optional browser WebMCP tools list conversations or stage drafts; they do not send messages.
+
+## Architecture
+
+| Component | Technology | Responsibility |
+|---|---|---|
+| Frontend | React 19 + TypeScript | Chat, discovery, profiles, and group controls |
+| Build and hosting | Vite + Vercel | Frontend build and deployment |
+| Authentication | Supabase Auth | Email/password accounts and sessions |
+| Database | PostgreSQL | Messages, profiles, memberships, invitations, ratings, and matching |
+| Live communication | Supabase Realtime | WebSocket-based updates, presence, and typing |
+| Authorization | Row-Level Security and SQL functions | Membership checks, identity isolation, and group permissions |
+| Audio storage | Supabase Storage | Profile music uploads |
+
+The frontend calls Supabase directly using its public client key. Database functions perform sensitive operations and check the authenticated identity. Private-schema tables hold anonymous identity mappings, matching queues, blocks, and ratings. No separate Express or Python application server is required.
+
+## Requirements
+
+- Node.js **22.13 or later**; use a compatible Node 22 or 24 environment.
+- pnpm **11.25.0**, as specified in `package.json`.
+- A Supabase project for live operation.
+- Vercel for the intended hosted deployment.
+- A custom SMTP email service for unrestricted confirmation/password-reset delivery to public users.
+
+## Run locally
+
+Clone or download this repository and enter the directory containing `package.json`:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open `http://127.0.0.1:5173`. No account or external service is needed for this preview.
+Open `http://127.0.0.1:5173/`.
 
-To activate pnpm using Corepack, if available:
+If pnpm is unavailable, install the specified version:
 
 ```sh
-corepack enable
-corepack prepare pnpm@11.25.0 --activate
+npm install -g pnpm@11.25.0
 ```
 
-If Corepack is unavailable, install pnpm with `npm install -g pnpm@11.25.0`.
+Without valid Supabase environment variables, the app opens a **clearly labeled local preview**. Sample users are fictional; preview changes stay in that browser and do not reach real accounts. Preview data uses local storage. This mode is useful for exploring the interface, but is not proof of live authentication or multi-user communication.
 
-## 2. Create a fresh Supabase backend
+## Set up Supabase
 
-1. Create a project at [Supabase](https://supabase.com/dashboard). Choose your region and save the database password privately. The application does **not** need that password.
-2. Open the project’s **SQL Editor**. Run the complete `supabase/migrations/001_kindred.sql` **once**, then run the complete `supabase/migrations/002_discover.sql` **once**, then `supabase/migrations/003_interests.sql` **once**, then `supabase/migrations/004_custom_interests.sql` **once**, then `supabase/migrations/005_group_management.sql` **once**. Run them in this order. The second migration adds email confirmation requirements, private anonymous identities, random matching, ratings, blocks, and the profile music bucket. Each file is transactional; if one fails, resolve the reported error before rerunning that entire file.
-3. Under **Authentication → Sign In / Providers**, enable **Email**, keep email confirmation enabled, and disable **Phone**. Configure SMTP for confirmation and password reset emails before inviting public users. No SMS provider is needed. Email uniqueness is managed by Supabase Auth; the app normalizes entered addresses to lowercase and the database checks the actual confirmed email, never user-supplied metadata.
-   This release targets a fresh database. If resetting an existing project, clear old Auth users as well as application data, and recreate the application schema before running these migrations. Deleting rows alone does not replace old functions or policies. Keep the Supabase-managed Auth, Storage, and Realtime schemas intact.
-4. Under **Authentication → URL Configuration**, set the local Site URL to `http://127.0.0.1:5173` during development. Add it as an allowed redirect URL too. Add `http://localhost:5173` if you use that address instead.
-5. In Realtime settings, disable **Allow public access** (private channels only). Account updates, random-match notifications, and conversation typing/presence channels are private. Postgres message access is also checked by table RLS.
-6. Copy the project URL and **publishable key** from the project’s Connect dialog/API settings. The older `anon` key also works, but never use a `service_role`, `sb_secret_...`, database password, or JWT signing secret in this frontend.
-7. Copy `.env.example` to `.env` and fill in:
+### 1. Install the database
+
+For a **fresh Supabase project**, open SQL Editor and run each complete migration once, in order:
+
+1. `supabase/migrations/001_kindred.sql` — core messaging, profiles, access policies, and Realtime configuration.
+2. `supabase/migrations/002_discover.sql` — email verification gates, separate personas, stranger matching, ratings, blocks, and profile music.
+3. `supabase/migrations/003_interests.sql` — interest-based matching.
+4. `supabase/migrations/004_custom_interests.sql` — custom interest normalization.
+5. `supabase/migrations/005_group_management.sql` — owners/admins, invitations, ownership transfer, and membership controls.
+
+Run whole files, not selected fragments. Each migration is transactional. If a file fails, resolve the reported error before rerunning that file. Do not rerun migrations that succeeded.
+
+**Existing email-only projects:** if migrations 001–004 are already installed, run only 005. These files are not an in-place migration from an older phone-based installation. For that version, use a fresh project and update the frontend connection details. Deleting rows alone does not update old functions and policies.
+
+### 2. Configure authentication and email
+
+In Supabase's authentication settings:
+
+- Allow new users to sign up.
+- Enable Email and Confirm email.
+- Disable Phone.
+- Set Site URL and allowed Redirect URLs to the actual deployed website origin, including `https://`. Add `http://127.0.0.1:5173` when testing live authentication locally.
+- Configure custom SMTP for public registration and password reset delivery.
+
+Supabase's built-in email sender is restricted to organization-member addresses and has a small sending allowance. Public visitors may encounter unauthorized-address or email-rate-limit errors until custom SMTP is configured. SMTP credentials belong in Supabase's settings, never in the frontend or GitHub repository.
+
+### 3. Set frontend environment variables
+
+Copy `.env.example` to `.env` and replace the placeholders:
 
 ```dotenv
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_PUBLISHABLE_KEY
 ```
 
-8. Restart the development server. Create an account with an email and password, confirm the email link, then sign in. Repeat with a different email in a separate browser profile or device. Choose **My profiles** to personalize both identities. Use **Meet someone** on both devices to match; the live queue waits for another eligible person. For direct chats, use **+** to find the other person by display name or username.
-9. The music bucket is created automatically by migration 002. Upload MP3, OGG, WAV, or M4A audio (10 MB maximum) from each profile editor. No music streaming API, extra key, or external player account is needed.
+The app also accepts `VITE_SUPABASE_ANON_KEY` for the public key. Set one public-key variable; `VITE_SUPABASE_PUBLISHABLE_KEY` takes precedence if both are present.
 
-The `VITE_*` values are deliberately browser-visible. Security comes from authenticated user tokens plus the included RLS/RPC checks. `.env` and local credentials are excluded from Git.
+These client values are intentionally public. **Never use a Supabase secret or service-role key**, database password, or SMTP credential in any `VITE_` variable. Do not commit `.env`.
 
-These migrations target a **new project** and are not designed to be run twice. Future schema changes should be added as new migrations. If the migration fails, its transaction rolls back; resolve the reported error before rerunning the entire file.
+Restart the development server after changing variables. Create and confirm separate accounts to test live operation.
 
-## 3. Deploy on Vercel
+## Deploy on Vercel
 
-1. Put the contents of this folder in a new repository. Keep it private while the hackathon is in progress if required by your organizers.
-2. Import the repository at [Vercel](https://vercel.com/new).
-3. Use the **Vite** framework preset. If the repository contains this folder within another folder, set Vercel’s **Root Directory** to the folder containing `package.json`.
-4. Select Node.js **22.x** or **24.x**. The committed `packageManager` specifies pnpm. The build command is `pnpm build`, and the output directory is `dist`. `vercel.json` includes SPA rewrites and basic security headers.
-5. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel’s environment variables. Apply them to Production, and to Preview if you want preview deployments to use this backend.
-6. Deploy. Add the exact HTTPS deployment origin to Supabase’s allowed redirect URLs and set it as the Auth Site URL. Add a custom domain too if you use one. Use exact origins for production; do not authorize arbitrary domains.
-7. Rebuild after changing `VITE_*` variables because Vite injects them at build time.
-8. Test email sign-up, confirmation, sign-in, and password reset, direct chat, anonymous matching, private ratings, blocking, and profile songs from two devices on the deployed URL.
+1. Push the complete source to GitHub, keeping `package.json` at the chosen project root.
+2. Import the repository into Vercel, or use the existing connected project.
+3. Set the framework to **Vite**, build command to `pnpm build`, and output directory to `dist`.
+4. Set the root directory to the folder containing `package.json` and select a compatible Node version.
+5. Add the Supabase URL and public-key variables for the intended environment.
+6. Deploy. Changes to frontend environment variables require a new build/redeployment.
+7. Put the stable production website origin in Supabase's Site URL and allowed Redirect URLs.
+8. Verify the public website in an incognito window. A Vercel Request Access page is deployment protection, not Kindred authentication; use the public production domain and configure its access appropriately for judging.
 
-Vercel serves the frontend. Supabase provides Auth, Postgres storage, and the live WebSocket service. There is no separate application server to provision. Choose hosting/database service plans according to actual usage and provider limits.
+`vercel.json` includes SPA rewrites and basic security headers. GitHub commits to the connected production branch normally trigger deployment. Apply required new database migrations before deploying code that depends on them.
 
-## 4. Verification
+A Vercel deployment marked **Ready** confirms that the deployment completed; it does not establish that authentication, database setup, or multi-user delivery works.
+
+## Testing
+
+Run local checks:
 
 ```sh
 pnpm test
@@ -102,19 +159,21 @@ pnpm test:database
 pnpm build
 ```
 
-The database suite uses an isolated in-memory PostgreSQL runtime (PGlite) with minimal Auth/Realtime schema stubs. It runs **all five actual migrations** and tests data isolation, email confirmation gates, separate anonymous identities, queue/match lifecycle, score-based eligibility, blocks, rating privacy, upload ownership, duplicate retries, private-channel policy, read receipts, and atomic conversation creation. It does **not** emulate Supabase Auth, email delivery, hosted Storage/Realtime, or network failures.
+The latest recorded checks passed: **11 unit tests and 77 database checks**, for **88 total**, plus the production build. The database suite applies all five migrations in an isolated PGlite PostgreSQL runtime with Auth/Realtime/Storage stubs. It checks membership isolation, message retries, anonymous identity separation, matching, ratings, blocking, tags, invitations, role permissions, capacity, and access revocation.
+
+These checks do not emulate hosted email delivery, Storage uploads, or real WebSocket delivery. The interface has been checked in local preview; the submitted deployment must be tested separately.
 
 ### Live backend smoke test
 
-After setup, create and email-confirm **three disposable test accounts**, using a distinct email for each. Account C must be different from A and B. Add the following non-Vite variables to your ignored `.env`:
+Use a test Supabase project with three distinct existing confirmed accounts. Add these private, non-Vite variables to the ignored `.env`:
 
 ```dotenv
 SUPABASE_TEST_EMAIL_A=first-test-account@example.com
-SUPABASE_TEST_PASSWORD_A=YOUR_TEST_ACCOUNT_PASSWORD
+SUPABASE_TEST_PASSWORD_A=YOUR_TEST_PASSWORD_A
 SUPABASE_TEST_EMAIL_B=second-test-account@example.com
-SUPABASE_TEST_PASSWORD_B=YOUR_TEST_ACCOUNT_PASSWORD
+SUPABASE_TEST_PASSWORD_B=YOUR_TEST_PASSWORD_B
 SUPABASE_TEST_EMAIL_C=third-test-account@example.com
-SUPABASE_TEST_PASSWORD_C=YOUR_TEST_ACCOUNT_PASSWORD
+SUPABASE_TEST_PASSWORD_C=YOUR_TEST_PASSWORD_C
 ```
 
 Then run:
@@ -123,71 +182,80 @@ Then run:
 pnpm test:live
 ```
 
-This signs in three existing accounts, creates/reuses the A–B private chat concurrently, sends one marked test message, observes its actual WebSocket arrival, confirms persisted history and retry deduplication, and checks that C cannot access the chat. It soft-deletes the test message at the end. Credentials are never logged. The A–B conversation and a deletion tombstone remain in the test project.
+This creates/reuses the A–B direct conversation, sends a marked test message, waits for database replication readiness, measures WebSocket arrival time, checks persistence and retry deduplication, and checks that C cannot access the conversation. It soft-deletes the test message afterward; the conversation and a deletion tombstone remain. Never commit the credentials.
 
-### Browser acceptance checks
+### Delayed messages and account sessions
 
-- New user confirms their email and remains signed in after reload; sign-out returns to sign-in. Unconfirmed accounts cannot enter the workspace.
-- Two eligible users choose Meet someone and connect; an unpaired user sees the waiting state and can cancel.
-- Select five tags and verify a sixth cannot be added; deselecting allows replacement. Preferences survive reload.
-- Matching prioritizes shared tags. Strict search waits for overlap and cannot be bypassed by the other user's open search; canceling allows preferences to be changed.
-- A conversation shows mutual interest badges and selected interests in the partner profile, without underlying account identifiers.
-- Anonymous partner payloads contain the chosen alias/bio/song and fresh session identity, with no real name, username, phone, email, or underlying account ID.
-- End a random conversation, rate privately or skip, optionally block, and start the next match. The previous peer cannot send once ended. A block prevents future pairing.
-- Edit each profile independently; open a partner profile and verify the correct song/bio. If the browser blocks automatic audio, use the visible Play button.
-- Disconnect a random participant for over 90 seconds; the remaining user sees the ended state after the next heartbeat.
-- Two accounts create the same direct chat from opposite sides without duplicates.
-- A sends a message; B receives it immediately, and the message remains after reload.
-- Typing appears only while composing and expires; presence disappears after disconnect detection.
-- B’s unread count clears only when the latest messages are visible. A sees a read receipt.
-- Simulate a dropped connection. Retry a failed send and verify that it appears exactly once. Switching conversations and reloading should preserve unsent retry items in the same tab.
-- Create a circle and verify all its members receive messages.
-- Search, edit, and delete both recent and older messages after loading earlier history.
-- On a phone: open chat, send, go back, search, open details, and edit profile without horizontal scrolling.
+The message-update connection is monitored separately from presence/typing. While database updates are not ready, visible online windows reconcile saved messages every five seconds; healthy connections retain a 30-second reconciliation check for missed events. Five seconds is a polling interval, not a delivery-time guarantee. Reconnection also reloads persisted history.
 
-## Architecture and boundaries
+If messages only arrive through polling, run `supabase/realtime-diagnostic.sql` in the Supabase SQL Editor and inspect Logs → Realtime. All five application tables should be published with authenticated SELECT access and row security enabled. The diagnostic is read-only; do not disable row security to troubleshoot.
 
-`src/App.tsx` handles session gating, conversation state, loading, retries, and responsive navigation. `src/components.tsx` holds auth forms, dialogs, profile editing, people selection, and conversation details. `src/lib/api.ts` is the live data interface; `demo.ts` implements the explicitly local preview. `src/Discover.tsx`, `src/Personas.tsx`, and `src/EmailAuth.tsx` handle discovery, dual profiles/music, and email gating. All five files in `supabase/migrations/` form the backend.
+Ordinary tabs/windows within one browser profile share sign-in state. Regular and incognito sessions should be separate, as should separate browser profiles/devices. Sign-out ends only the current Supabase session. An auth initialization guard prevents an older session lookup from overwriting a newer auth event; this does not establish the cause of any reported cross-window account switch.
 
-Messages are persisted **before** successful delivery is shown. The client supplies a UUID to make retries idempotent. Direct chats use a canonical unique pair of user IDs and are created together with memberships in one database transaction. All mutations use RPCs that derive the sender from `auth.uid()`. Clients have read-only table grants, and table RLS limits conversations, memberships, and messages to participants.
+### Manual acceptance checks
 
-The browser subscribes to Postgres Changes over a private per-user channel. Reconnection and periodic reconciliation recover missed events and refresh the loaded message range. Separate private conversation channels carry ephemeral typing and presence, not message bodies. Presence is advisory: clients supply presence payloads; it is never used for authorization. Removing members and changing membership after creation are intentionally not exposed.
+Use separate browsers or devices and real accounts:
 
-Regular profiles expose display name, username, color, bio, and optional song to email-confirmed users. Email stays in Supabase Auth. Anonymous settings and the account-to-persona mapping stay in the private schema; stranger APIs use a new persona UUID for each match. Anonymous mode applies to random conversations; direct chats and circles use your regular profile. The service operator can associate accounts and messages. Users can still identify themselves in their chosen alias, bio, audio, or chat; anonymity is not a guarantee against self-disclosure. Messages use HTTPS/WSS and database authorization; **end-to-end encryption is not implemented**.
+- Register, confirm email, sign in, reload, sign out, and sign back in.
+- Send direct messages both ways without refreshing; confirm history persists.
+- Check typing, presence, unread counts, search, editing, and deletion.
+- Create a circle, accept/decline invitations, promote an admin, transfer ownership, remove a member, and leave.
+- Confirm pending invitees and removed members cannot read or send group messages.
+- Match two eligible accounts on shared/custom tags; confirm strict filtering waits when there is no overlap.
+- Check anonymous profiles, end a conversation, provide private feedback, and test blocking.
+- Upload/play profile music and test the mobile layout.
 
-Music files are delivered from a public Storage bucket with opaque random filenames; someone with a song URL can play it. Storage metadata/upload/delete access is owner-restricted. The same object cannot be assigned to both personas (upload a separate copy if desired), but identical audio can still identify someone. Removing a song unlinks it from the profile; it does not delete the uploaded object or old conversation snapshot. Upload only audio you have permission to share. Browsers may block autoplay; the player always offers a Play control. Only one profile song plays at a time. Profile changes apply to future random sessions; the current session keeps its original profile snapshot.
+## Judge access without SMTP
 
-Ratings are never returned to other users or shown publicly. Matching uses a weighted average of the latest rating from each distinct peer in the last 90 days, with five initial votes at 3.5 to soften early ratings. Accounts with at least five distinct raters and a weighted score below 2.6 match only within that lower-score group. Within the same group, available people sharing more selected interests are preferred first, then closer scores with a small random adjustment. If either person enables shared-interest-only matching, they must have at least one tag in common. Without that option, matching can fall back to people with different interests. The same peer cannot inflate the score by repeated votes. Interest selection is optional and validated server-side (up to five validated tags). Preferences are stored privately in the active queue; selected interests are included in the current conversation profile snapshot, so a matched peer can see them. Browser preferences are saved per account; they do not expose an anonymous-to-regular profile link. Skipping a rating has no effect. This is community feedback, not comprehensive abuse detection. Blocks exclude pairs in either direction; recent pairs are excluded for 24 hours.
+For a controlled demo, the project administrator can create dedicated test accounts through Supabase Auth administration and mark those accounts confirmed. Give judges distinct account credentials privately. This allows email/password sign-in without sending confirmation emails; it does not demonstrate public registration or verification of email ownership.
 
-Discovery uses private per-account broadcast notifications plus an 8-second reconciliation heartbeat. Queue entries expire after 45 seconds without heartbeat, and sessions end after a participant is absent for 90 seconds. Random history is persisted and paginated while a session remains accessible; no past-random-chat archive is exposed. Transactions serialize match transitions to avoid double assignment. The app is sized for a hackathon/small community; a larger public service needs operational moderation, storage retention, and matchmaking capacity work. Voice/video calls, voice notes, AI chat, and push notifications are outside this version’s scope.
+Keep normal email confirmation enabled. Do not grant judges Supabase organization/dashboard access just to let them use the app. Public sign-up testing still needs a configured email provider. Explain the test-account arrangement in the submission instructions.
 
-Drafts and pending retry items use `sessionStorage`; they survive reloads in the same tab, not necessarily closing the browser. Preview content uses `localStorage`. Browsers with storage disabled may not preserve either. Font loading uses Google Fonts (Fraunces and Nunito Sans) with system-font fallbacks.
+## Privacy and limitations
 
-## Verified in the delivered workspace
+- Conversations are restricted to members through database permissions. Anonymous matching separates visible personas from account identities.
+- Messages are **not end-to-end encrypted**. The service operator can access stored data and associate accounts with messages.
+- Profile music uses a public storage bucket with opaque paths; it is not private message media. Upload only audio you have permission to share.
+- Message deletion is a soft delete, not a guarantee of permanent erasure.
+- Removing a member stops future database access; it cannot recall information already downloaded or copied.
+- Ratings influence matching bands; they are not an AI moderation system or a guarantee of safe behavior.
+- The application currently supports **human-to-human text messaging**. Chat attachments, image/video messages, voice-note recording, push notifications, and an LLM chatbot are not implemented.
+- Session drafts survive reloads within the same tab, not necessarily closing the browser. Disabled browser storage can prevent persistence.
+- Hosted authentication, Storage, Realtime delivery, and the submitted deployment need independent verification. Do not treat sample preview data as live results.
 
-- Production TypeScript/Vite build.
-- Message merge/validation tests.
-- Database/RLS/RPC checks against the migration.
-- Browser interactions in the local preview on desktop and phone-sized viewports.
+## Source layout
 
-**Not yet verified:** hosted authentication/email flows, hosted music storage, real multi-user WebSocket delivery, or a Vercel deployment. These require the fresh Supabase/Vercel accounts and configuration described above. `pnpm test:live` is provided to verify the connected backend rather than treating local sample data as proof of real-time delivery.
+```text
+src/
+  App.tsx                 Sessions and messaging workspace
+  components.tsx          Auth forms, dialogs, people selection, and details
+  EmailAuth.tsx           Confirmed-email workspace gate
+  GroupManagement.tsx     Invitations and circle administration
+  Discover.tsx            Stranger matching and conversations
+  Personas.tsx            Regular/anonymous profiles and music
+  styles.css              Responsive theme and layout
+  lib/                    Supabase client, APIs, types, preview, matching helpers
+supabase/migrations/      Five ordered database migrations
+ tests/                   Unit, database, and live checks
+.env.example              Public frontend configuration template
+vercel.json               Hosting configuration
+```
 
-## Official references
+## Hackathon submission
 
-- [Vite on Vercel](https://vercel.com/docs/frameworks/frontend/vite)
-- [Supabase API keys](https://supabase.com/docs/guides/getting-started/api-keys)
-- [Supabase Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security)
-- [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes)
-- [Realtime authorization](https://supabase.com/docs/guides/realtime/authorization)
-- [Auth redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
+- Submit complete source through GitHub with this README and all setup files.
+- Follow the requirement to keep the repository private until the hackathon ends; it may be made public at submission. Ensure organizers can access the final source.
+- Provide reproducible setup instructions and a working real-time application. Deployment is optional in the statement, but the live URL is useful for judging.
+- Submit a PPT covering the idea, implementation, features, and product through a publicly accessible Google Drive link.
+- Submit a short working-product demonstration on YouTube with public access.
+- Verify the presentation and video links in an incognito window, and confirm the submission portal and deadline with the organizers.
+- Describe only implemented features; do not claim end-to-end encryption, multimedia messaging, or AI functionality.
 
-- [Supabase email/password authentication](https://supabase.com/docs/guides/auth/passwords)
-- [Database broadcast](https://supabase.com/docs/guides/realtime/broadcast)
-- [Browser autoplay rules](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay)
+## References
 
-
-Circle administration
----------------------
-Circle creators are owners. Selected people receive in-app invitations instead of being automatically added. Recipients see invitations above their conversation list and may accept or decline; acceptance grants access to the circle and its existing history. Owners can promote/demote admins and transfer ownership. Owners and admins may invite people, revoke pending invitations, and remove ordinary members; only an owner may remove admins. Members can leave; owners must transfer ownership before leaving. The limit of 20 includes pending invitations. These permissions are enforced by server functions and row-level security, with group-level locks serializing changes. Removed members lose future database access, but previously downloaded messages cannot be recalled from their device.
-
-To update an existing **email-only** Kindred database with migrations 001–004 already installed, run `005_group_management.sql` once, then deploy the updated source to Vercel. Do not rerun the complete fresh-setup script against an existing schema. No environment-variable change is needed. For a fresh project, run all five migrations in order or the provided combined setup script once. Browser-only preview does not deliver invitations to real users; hosted invitation acceptance and Realtime delivery must be checked with separate signed-in accounts.
+- [Supabase authentication](https://supabase.com/docs/guides/auth)
+- [Supabase custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+- [Supabase Row-Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security)
+- [Supabase Realtime](https://supabase.com/docs/guides/realtime)
+- [Vite](https://vite.dev/guide/)
+- [Vercel](https://vercel.com/docs)

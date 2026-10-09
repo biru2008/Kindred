@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import assert from "node:assert/strict";
 const url = process.env.VITE_SUPABASE_URL;
-const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const required = [
   "SUPABASE_TEST_EMAIL_A",
   "SUPABASE_TEST_PASSWORD_A",
@@ -59,11 +59,20 @@ try {
   console.log("PASS concurrent direct-chat creation returns one conversation");
   messageId = crypto.randomUUID();
   let resolveDelivery;
+  let resolveReady;
+  let rejectReady;
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  let receivedAt;
   const delivered = new Promise((resolve) => {
     resolveDelivery = resolve;
   });
   channel = b
-    .channel(`updates:${users[1].id}`, { config: { private: true } })
+    .channel(`updates:${users[1].id}`, { config: { private: true, broadcast: { replication_ready: true } } })
+    .on("system", {}, (payload) => {
+      if (!["system", "postgres_changes"].includes(payload.extension)) return;
+      if (payload.status === "ok") resolveReady();
+      else if (payload.status === "error") rejectReady(new Error("Database replication is not ready."));
+    })
     .on(
       "postgres_changes",
       {
@@ -73,7 +82,10 @@ try {
         filter: `conversation_id=eq.${room}`,
       },
       (payload) => {
-        if (payload.new.id === messageId) resolveDelivery(payload.new);
+        if (payload.new.id === messageId) {
+          receivedAt = performance.now();
+          resolveDelivery(payload.new);
+        }
       },
     );
   await new Promise((resolve, reject) => {
@@ -86,17 +98,15 @@ try {
         ),
       20000,
     );
+    ready.then(() => { clearTimeout(timeout); resolve(); }, (error) => { clearTimeout(timeout); reject(error); });
     channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        clearTimeout(timeout);
-        resolve();
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        clearTimeout(timeout);
-        reject(new Error("Realtime channel could not connect."));
+      if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
+        rejectReady(new Error("Realtime channel could not connect."));
       }
     });
   });
   const body = `[Kindred live test] ${new Date().toISOString()}`;
+  const sentAt = performance.now();
   const send = await a.rpc("send_message", {
     conversation: room,
     message_id: messageId,
@@ -116,7 +126,7 @@ try {
   ]).finally(() => clearTimeout(deliveryTimer));
   assert.equal(received.sender_id, users[0].id);
   assert.equal(received.body, body);
-  console.log("PASS real WebSocket delivery between two signed-in accounts");
+  console.log(`PASS real WebSocket delivery between two signed-in accounts (${Math.round(receivedAt - sentAt)} ms from send request)`);
   const retry = await a.rpc("send_message", {
     conversation: room,
     message_id: messageId,
