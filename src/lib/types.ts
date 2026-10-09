@@ -8,7 +8,10 @@ export type Profile = {
   song_path?: string | null;
   song_title?: string;
 };
-export type Member = Profile & { last_read_at: string };
+export type Member = Profile & {
+  last_read_at: string;
+  role?: "owner" | "admin" | "member";
+};
 export type Message = {
   id: string;
   conversation_id: string;
@@ -70,3 +73,13 @@ export function errorText(error: unknown) {
       ? String(error.message)
       : "Something went wrong. Please try again.";
 }
+
+export type GroupInvitation = {
+  id: string;
+  conversation_id: string;
+  title: string;
+  invitee: string;
+  name: string;
+  inviter: string;
+  status: string;
+};

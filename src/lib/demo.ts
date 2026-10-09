@@ -1,4 +1,4 @@
-import type { Conversation, Message, Profile } from "./types";
+import type { Conversation, Message, Profile, GroupInvitation } from "./types";
 import { validMessage } from "./types";
 const KEY = "kindred-preview-v1";
 export const demoUser: Profile = {
@@ -12,6 +12,7 @@ type Data = {
   profiles: Profile[];
   conversations: Conversation[];
   messages: Message[];
+  invitations?: GroupInvitation[];
 };
 const ago = (minutes: number) =>
   new Date(Date.now() - minutes * 60000).toISOString();
@@ -214,11 +215,103 @@ function save(d: Data) {
   }
   window.dispatchEvent(new Event("kindred-demo"));
 }
+function normalizeGroups(d: Data) {
+  for (const c of d.conversations)
+    if (c.kind === "group" && !c.members.some((m) => m.role === "owner")) {
+      for (const m of c.members)
+        m.role = m.id === demoUser.id ? "owner" : "member";
+    }
+}
 export const demo = {
+  invitations: async () => read().invitations || [],
+  inviteGroup: async (conversation: string, person: string) => {
+    const d = read();
+    normalizeGroups(d);
+    const c = d.conversations.find((c) => c.id === conversation);
+    if (
+      !c ||
+      !["owner", "admin"].includes(
+        c.members.find((m) => m.id === demoUser.id)?.role || "",
+      )
+    )
+      throw new Error("Only owners and admins can invite.");
+    if (c.members.some((m) => m.id === person))
+      throw new Error("Already a member.");
+    if (
+      c.members.length +
+        (d.invitations || []).filter((i) => i.conversation_id === conversation)
+          .length >=
+      20
+    )
+      throw new Error("Circle capacity is 20, including pending invitations.");
+    if (
+      (d.invitations || []).some(
+        (i) => i.conversation_id === conversation && i.invitee === person,
+      )
+    )
+      throw new Error("Invitation already pending.");
+    const p = d.profiles.find((p) => p.id === person)!;
+    (d.invitations ||= []).push({
+      id: crypto.randomUUID(),
+      conversation_id: conversation,
+      title: c.title!,
+      invitee: person,
+      name: p.display_name,
+      inviter: demoUser.display_name,
+      status: "pending",
+    });
+    save(d);
+  },
+  respondInvitation: async (_invitation: string, _accept: boolean) => {
+    throw new Error(
+      "Preview invitations cannot reach other people. Connect Supabase to accept invitations from another account.",
+    );
+  },
+  manageGroup: async (conversation: string, person: string, action: string) => {
+    const d = read();
+    normalizeGroups(d);
+    const c = d.conversations.find((c) => c.id === conversation)!;
+    const actor = c.members.find((m) => m.id === demoUser.id),
+      target = c.members.find((m) => m.id === person);
+    if (!actor) throw new Error("Circle unavailable.");
+    if (action === "revoke" && ["owner", "admin"].includes(actor.role!))
+      d.invitations = (d.invitations || []).filter(
+        (i) => !(i.conversation_id === conversation && i.invitee === person),
+      );
+    else if (
+      ["promote", "demote", "transfer"].includes(action) &&
+      actor.role === "owner" &&
+      target &&
+      person !== demoUser.id
+    ) {
+      target.role =
+        action === "transfer"
+          ? "owner"
+          : action === "promote"
+            ? "admin"
+            : "member";
+      if (action === "transfer") actor.role = "admin";
+    } else if (
+      (action === "leave" &&
+        person === demoUser.id &&
+        actor.role !== "owner") ||
+      (action === "remove" &&
+        target &&
+        person !== demoUser.id &&
+        target.role !== "owner" &&
+        (actor.role === "owner" ||
+          (actor.role === "admin" && target.role === "member")))
+    )
+      c.members = c.members.filter((m) => m.id !== person);
+    else throw new Error("You cannot perform this circle action.");
+    save(d);
+  },
   profile: async () => read().profiles.find((p) => p.id === demoUser.id)!,
   conversations: async () => {
     const d = read();
+    normalizeGroups(d);
     return d.conversations
+      .filter((c) => c.members.some((m) => m.id === demoUser.id))
       .map((c) => {
         const msgs = d.messages
           .filter((m) => m.conversation_id === c.id)
@@ -285,12 +378,31 @@ export const demo = {
       kind: title ? "group" : "direct",
       title: title || null,
       members: d.profiles
-        .filter((p) => [demoUser.id, ...ids].includes(p.id))
-        .map((p) => ({ ...p, last_read_at: new Date().toISOString() })),
+        .filter((p) =>
+          (title ? [demoUser.id] : [demoUser.id, ...ids]).includes(p.id),
+        )
+        .map((p) => ({
+          ...p,
+          last_read_at: new Date().toISOString(),
+          role: title ? ("owner" as const) : ("member" as const),
+        })),
       last_message: null,
       unread: 0,
       updated_at: new Date().toISOString(),
     });
+    if (title)
+      for (const person of ids) {
+        const p = d.profiles.find((p) => p.id === person)!;
+        (d.invitations ||= []).push({
+          id: crypto.randomUUID(),
+          conversation_id: id,
+          title,
+          invitee: person,
+          name: p.display_name,
+          inviter: demoUser.display_name,
+          status: "pending",
+        });
+      }
     save(d);
     return id;
   },

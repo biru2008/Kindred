@@ -120,11 +120,23 @@ export function PersonaViewer({
           <span>@{persona.username}</span>
         )}
         <p>{persona.bio || "Still finding the words. Ask me what I’m into."}</p>
+        {!!persona.interests?.length && (
+          <div
+            className="interest-tags profile-interests"
+            aria-label="Conversation interests"
+          >
+            {persona.interests.map((tag) => (
+              <span className="interest-tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <ProfileSong path={persona.song_path} title={persona.song_title} />
       {persona.anonymous && (
         <p className="identity-note">
-          A separate profile. No real name, email, phone number, or
+          A separate profile. No real name, email, or
           regular-profile link is shared here.
         </p>
       )}

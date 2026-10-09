@@ -5,7 +5,8 @@ const db = new PGlite();
 await db.exec(`
  create role anon; create role authenticated;
  create schema auth;
- create table auth.users(id uuid primary key, raw_user_meta_data jsonb, phone text unique, phone_confirmed_at timestamptz);
+ create table auth.users(id uuid primary key, raw_user_meta_data jsonb, email text, email_confirmed_at timestamptz);
+ create unique index auth_users_email_unique on auth.users(lower(email));
  create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true),'')::uuid $$;
  grant usage on schema auth to authenticated, anon;
  create schema realtime; create table realtime.messages(id bigint generated always as identity, extension text);
@@ -34,6 +35,24 @@ await db.exec(
     "utf8",
   ),
 );
+await db.exec(
+  await readFile(
+    new URL("../supabase/migrations/003_interests.sql", import.meta.url),
+    "utf8",
+  ),
+);
+await db.exec(
+  await readFile(
+    new URL("../supabase/migrations/004_custom_interests.sql", import.meta.url),
+    "utf8",
+  ),
+);
+await db.exec(
+  await readFile(
+    new URL("../supabase/migrations/005_group_management.sql", import.meta.url),
+    "utf8",
+  ),
+);
 const A = "00000000-0000-4000-8000-000000000001",
   B = "00000000-0000-4000-8000-000000000002",
   C = "00000000-0000-4000-8000-000000000003";
@@ -43,7 +62,7 @@ for (const [id, name] of [
   [C, "outsider"],
 ])
   await db.query(
-    `insert into auth.users(id,raw_user_meta_data,phone,phone_confirmed_at) values($1::uuid,$2,'91'||right($1::text,12),now())`,
+    `insert into auth.users(id,raw_user_meta_data,email,email_confirmed_at) values($1::uuid,$2,$1::text||'@example.com',now())`,
     [id, JSON.stringify({ username: name, display_name: name })],
   );
 let checks = 0;
@@ -259,21 +278,24 @@ await check("Edit and soft delete persist", async () => {
     0,
   );
 });
-await check("Group creation is atomic and includes creator", async () => {
-  const group = await value("select public.start_conversation($1,$2) v", [
-    [B, C],
-    "Weekend",
-  ]);
-  assert.equal(
-    Number(
-      await value(
-        "select count(*) v from public.conversation_members where conversation_id=$1",
-        [group],
+await check(
+  "Group creation creates the owner and invitations, without adding recipients",
+  async () => {
+    const group = await value("select public.start_conversation($1,$2) v", [
+      [B, C],
+      "Weekend",
+    ]);
+    assert.equal(
+      Number(
+        await value(
+          "select count(*) v from public.conversation_members where conversation_id=$1",
+          [group],
+        ),
       ),
-    ),
-    3,
-  );
-});
+      1,
+    );
+  },
+);
 await check(
   "Invalid group/member data cannot create partial conversations",
   async () => {
@@ -342,5 +364,11 @@ console.log(
 );
 const { testDiscovery } = await import("./discovery-checks.mjs");
 await testDiscovery(db, { A, B, C, as, value, check });
+const { testInterests } = await import("./interests-checks.mjs");
+await testInterests(db, { as, value, check });
+const { testCustomInterests } = await import("./custom-interests-checks.mjs");
+await testCustomInterests(db, { as, value, check });
+const { testGroups } = await import("./group-checks.mjs");
+await testGroups(db, { A, B, C, as, value, check });
 console.log(`Total: ${checks} database checks passed.`);
 await db.close();

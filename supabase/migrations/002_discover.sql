@@ -1,23 +1,24 @@
--- Run after 001_kindred.sql. Phone-backed discovery with deliberately separate identities.
+-- Run after 001_kindred.sql. Email-backed discovery with deliberately separate identities.
 begin;
-create function private.phone_verified() returns boolean language sql stable security definer set search_path='' as $$
- select exists(select 1 from auth.users where id=auth.uid() and phone is not null and phone<>'' and phone_confirmed_at is not null);
+create function private.email_verified() returns boolean language sql stable security definer set search_path='' as $$
+ select exists(select 1 from auth.users where id=auth.uid() and email is not null and btrim(email)<>'' and email_confirmed_at is not null);
 $$;
-revoke all on function private.phone_verified() from public,anon;
-grant execute on function private.phone_verified() to authenticated;
-create function private.require_phone() returns void language plpgsql stable security definer set search_path='' as $$
-begin if not private.phone_verified() then raise exception 'Verify your phone number before continuing'; end if; end; $$;
-revoke all on function private.require_phone() from public,anon,authenticated;
+revoke all on function private.email_verified() from public,anon;
+grant execute on function private.email_verified() to authenticated;
+create function private.require_email() returns void language plpgsql stable security definer set search_path='' as $$
+begin if not private.email_verified() then raise exception 'Confirm your email address before continuing'; end if; end; $$;
+revoke all on function private.require_email() from public,anon,authenticated;
 create function public.account_status() returns jsonb language sql stable security definer set search_path='' as $$
- select jsonb_build_object('phone_verified',private.phone_verified());
+ select jsonb_build_object('email_verified',private.email_verified());
 $$;
 revoke all on function public.account_status() from public,anon;
 grant execute on function public.account_status() to authenticated;
 
--- Phone-only signups do not require email or user-provided metadata.
+-- Email is required; optional profile metadata has safe defaults.
 create or replace function private.handle_new_user() returns trigger language plpgsql security definer set search_path='' as $$
 declare n text; u text;
 begin
+ if new.email is null or btrim(new.email)='' then raise exception 'An email address is required'; end if;
  n:=left(btrim(coalesce(new.raw_user_meta_data->>'display_name','New friend')),50);
  if n='' then n:='New friend'; end if;
  u:=lower(coalesce(new.raw_user_meta_data->>'username',''));
@@ -26,19 +27,19 @@ begin
  insert into public.profiles(id,display_name,username) values(new.id,n,u);return new;
 end; $$;
 create or replace function private.is_member(cid uuid) returns boolean language sql stable security definer set search_path='' as $$
- select private.phone_verified() and exists(select 1 from public.conversation_members where conversation_id=cid and user_id=auth.uid());
+ select private.email_verified() and exists(select 1 from public.conversation_members where conversation_id=cid and user_id=auth.uid());
 $$;
 drop policy profiles_read on public.profiles;
-create policy profiles_read on public.profiles for select to authenticated using(private.phone_verified());
+create policy profiles_read on public.profiles for select to authenticated using(private.email_verified());
 alter function public.start_conversation(uuid[],text) set schema private;
 revoke all on function private.start_conversation(uuid[],text) from public,anon,authenticated;
 create function public.start_conversation(member_ids uuid[],group_title text default null) returns uuid language plpgsql security definer set search_path='' as $$
-begin perform private.require_phone();return private.start_conversation(member_ids,group_title);end; $$;
+begin perform private.require_email();return private.start_conversation(member_ids,group_title);end; $$;
 revoke all on function public.start_conversation(uuid[],text) from public,anon;
 grant execute on function public.start_conversation(uuid[],text) to authenticated;
 
 create or replace function public.update_profile(new_name text,new_bio text,new_color text) returns void language plpgsql security definer set search_path='' as $$
-begin perform private.require_phone();update public.profiles set display_name=btrim(new_name),bio=btrim(new_bio),color=new_color where id=auth.uid();end; $$;
+begin perform private.require_email();update public.profiles set display_name=btrim(new_name),bio=btrim(new_bio),color=new_color where id=auth.uid();end; $$;
 
 -- Only the normal profile is in the public directory. Anonymous settings never are.
 alter table public.profiles add column song_path text, add column song_title text not null default '' check(char_length(song_title)<=80);
@@ -96,20 +97,20 @@ create function private.persona_snapshot(who uuid,anon_mode boolean) returns jso
  from public.profiles p left join private.personas a on a.user_id=p.id where p.id=who;
 $$;
 create function public.my_personas() returns jsonb language plpgsql stable security definer set search_path='' as $$
-begin perform private.require_phone();return jsonb_build_object('normal',private.persona_snapshot(auth.uid(),false),'anonymous',private.persona_snapshot(auth.uid(),true));end; $$;
+begin perform private.require_email();return jsonb_build_object('normal',private.persona_snapshot(auth.uid(),false),'anonymous',private.persona_snapshot(auth.uid(),true));end; $$;
 
 -- Audio objects are opaque random filenames, never account IDs. Each persona gets its own upload.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
  values('profile-music','profile-music',true,10485760,array['audio/mpeg','audio/ogg','audio/wav','audio/x-wav','audio/mp4']) on conflict(id) do nothing;
 create policy music_upload on storage.objects for insert to authenticated with check(
- bucket_id='profile-music' and private.phone_verified() and owner_id=auth.uid()::text
+ bucket_id='profile-music' and private.email_verified() and owner_id=auth.uid()::text
  and name ~ '^[0-9a-f-]{36}\.(mp3|ogg|wav|m4a)$');
 create policy music_owner_read on storage.objects for select to authenticated using(bucket_id='profile-music' and owner_id=auth.uid()::text);
 create policy music_owner_delete on storage.objects for delete to authenticated using(bucket_id='profile-music' and owner_id=auth.uid()::text);
 create function public.save_persona(anon_mode boolean,new_name text,new_bio text,new_color text,new_song_path text default null,new_song_title text default '') returns void
 language plpgsql security definer set search_path='' as $$
 begin
- perform private.require_phone();
+ perform private.require_email();
  if anon_mode is null or new_name is null or char_length(btrim(new_name)) not between 1 and 40 or new_bio is null or char_length(new_bio)>160 or new_color is null or new_color not in ('fern','lavender','peach','blue','rose','amber') or new_song_title is null or char_length(new_song_title)>80 then raise exception 'Check the profile fields'; end if;
  if new_song_path is not null and not exists(select 1 from storage.objects where bucket_id='profile-music' and name=new_song_path and owner_id=auth.uid()::text) then raise exception 'Upload your own audio file';end if;
  if new_song_path is not null and ((anon_mode and exists(select 1 from public.profiles where id=auth.uid() and song_path=new_song_path)) or (not anon_mode and exists(select 1 from private.personas where user_id=auth.uid() and song_path=new_song_path))) then raise exception 'Upload a separate copy for each profile';end if;
@@ -131,12 +132,12 @@ declare who uuid;begin
  perform realtime.send(jsonb_build_object('changed',true),'random_changed','discover:'||who::text,true);
  end loop;
 end; $$;
-create policy discover_read on realtime.messages for select to authenticated using(private.phone_verified() and realtime.topic()='discover:'||(select auth.uid())::text);
+create policy discover_read on realtime.messages for select to authenticated using(private.email_verified() and realtime.topic()='discover:'||(select auth.uid())::text);
 
 create function public.random_state() returns jsonb language plpgsql security definer set search_path='' as $$
 declare me uuid:=auth.uid();sid uuid;session_row private.random_sessions;self_row private.random_members;peer_row private.random_members;
 begin
- perform private.require_phone();
+ perform private.require_email();
  -- Common short lock serializes match, cancel and end operations, preventing double assignment.
  perform pg_advisory_xact_lock(729401);
  select s.id into sid from private.random_sessions s join private.random_members m on m.session_id=s.id where m.user_id=me and (s.ended_at is null or not m.feedback_done) order by s.started_at desc limit 1;
@@ -157,7 +158,7 @@ end; $$;
 create function public.join_random(anon_mode boolean default true) returns jsonb language plpgsql security definer set search_path='' as $$
 declare me uuid:=auth.uid();peer uuid;peer_mode boolean;sid uuid;current_state jsonb;
 begin
- perform private.require_phone();if anon_mode is null then raise exception 'Choose a profile';end if;
+ perform private.require_email();if anon_mode is null then raise exception 'Choose a profile';end if;
  perform pg_advisory_xact_lock(729401);
  current_state:=public.random_state();
  if current_state->>'status' in ('matched','ended') then return current_state;end if;
@@ -181,16 +182,16 @@ begin
  perform private.notify_random(sid);return public.random_state();
 end; $$;
 create function public.cancel_random() returns void language plpgsql security definer set search_path='' as $$
-begin perform private.require_phone();perform pg_advisory_xact_lock(729401);delete from private.match_queue where user_id=auth.uid();end; $$;
+begin perform private.require_email();perform pg_advisory_xact_lock(729401);delete from private.match_queue where user_id=auth.uid();end; $$;
 create function public.end_random(session uuid) returns void language plpgsql security definer set search_path='' as $$
 begin
- perform private.require_phone();perform pg_advisory_xact_lock(729401);
+ perform private.require_email();perform pg_advisory_xact_lock(729401);
  if not exists(select 1 from private.random_members where session_id=session and user_id=auth.uid()) then raise exception 'Conversation unavailable';end if;
  update private.random_sessions set ended_at=coalesce(ended_at,now()) where id=session;perform private.notify_random(session);
 end; $$;
 create function public.rate_random(session uuid,rating integer default null,block_peer boolean default false) returns void language plpgsql security definer set search_path='' as $$
 declare peer uuid;done boolean;begin
- perform private.require_phone();perform pg_advisory_xact_lock(729401);
+ perform private.require_email();perform pg_advisory_xact_lock(729401);
  select m.feedback_done into done from private.random_members m join private.random_sessions s on s.id=m.session_id where m.session_id=session and m.user_id=auth.uid() and s.ended_at is not null;
  if not found then raise exception 'End the conversation before rating';end if;
  if done then raise exception 'Feedback has already been submitted';end if;
@@ -202,7 +203,7 @@ declare peer uuid;done boolean;begin
 end; $$;
 create function public.random_history(session uuid,before_time timestamptz default null,before_id uuid default null) returns jsonb language plpgsql stable security definer set search_path='' as $$
 begin
- perform private.require_phone();
+ perform private.require_email();
  if not exists(select 1 from private.random_members where session_id=session and user_id=auth.uid()) then raise exception 'Conversation unavailable';end if;
  if (before_time is null)<>(before_id is null) then raise exception 'Supply both cursor values';end if;
  return (select coalesce(jsonb_agg(to_jsonb(x) order by x.created_at,x.id),'[]'::jsonb) from(
@@ -210,7 +211,7 @@ begin
 end; $$;
 create function public.send_random(session uuid,message_id uuid,message_body text) returns void language plpgsql security definer set search_path='' as $$
 declare existing private.random_messages;begin
- perform private.require_phone();perform pg_advisory_xact_lock(729401);
+ perform private.require_email();perform pg_advisory_xact_lock(729401);
  if not exists(select 1 from private.random_members m join private.random_sessions s on s.id=m.session_id where m.session_id=session and m.user_id=auth.uid() and s.ended_at is null and not exists(select 1 from private.random_members other where other.session_id=session and other.last_seen<now()-interval '90 seconds')) then raise exception 'This conversation has ended';end if;
  if message_body is null or char_length(btrim(message_body)) not between 1 and 4000 then raise exception 'Messages must contain 1–4000 characters';end if;
  select * into existing from private.random_messages where id=message_id;

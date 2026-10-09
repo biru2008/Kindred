@@ -12,10 +12,10 @@ import {
 } from "lucide-react";
 import type { Conversation, Message, Profile } from "./lib/types";
 import { errorText, initials } from "./lib/types";
-import { PhoneForm } from "./PhoneAuth";
 import { ProfileSong, PersonaViewer } from "./Personas";
 import type { Persona } from "./lib/discover";
 import { api } from "./lib/api";
+import { GroupControls } from "./GroupManagement";
 import { isConfigured, supabase } from "./lib/supabase";
 
 export function Brand({ small = false }: { small?: boolean }) {
@@ -104,9 +104,7 @@ export function Auth({
   recovery?: boolean;
   onRecovered: () => void;
 }) {
-  const [mode, setMode] = useState<"phone" | "login" | "signup" | "reset">(
-    "phone",
-  );
+  const [mode, setMode] = useState<"login" | "signup" | "reset">("login");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -117,7 +115,9 @@ export function Auth({
     setError("");
     setNotice("");
     const values = new FormData(e.currentTarget);
-    const email = String(values.get("email") || "").trim();
+    const email = String(values.get("email") || "")
+      .trim()
+      .toLowerCase();
     const password = String(values.get("password") || "");
     try {
       if (recovery) {
@@ -224,22 +224,6 @@ export function Auth({
                   ? "We’ll send you a link to reset your password."
                   : "There’s always something to catch up on."}
           </p>
-          {isConfigured && !recovery && (
-            <div className="segmented">
-              <button
-                className={mode === "phone" ? "selected" : ""}
-                onClick={() => changeMode("phone")}
-              >
-                Phone
-              </button>
-              <button
-                className={mode !== "phone" ? "selected" : ""}
-                onClick={() => changeMode("login")}
-              >
-                Email
-              </button>
-            </div>
-          )}
           {!isConfigured ? (
             <div className="setup-notice">
               <MessageCircle size={24} />
@@ -252,8 +236,6 @@ export function Auth({
                 Explore the preview
               </button>
             </div>
-          ) : mode === "phone" && !recovery ? (
-            <PhoneForm />
           ) : (
             <form onSubmit={submit}>
               {mode === "signup" && !recovery && (
@@ -352,7 +334,7 @@ export function Auth({
               )}
             </form>
           )}
-          {isConfigured && !recovery && mode !== "phone" && (
+          {isConfigured && !recovery && (
             <div className="auth-switch">
               {mode === "login" ? (
                 <>
@@ -467,6 +449,11 @@ export function NewConversation({
           <Users size={16} /> A circle
         </button>
       </div>
+      {group && (
+        <p className="muted">
+          Selected people receive invitations. They join after accepting.
+        </p>
+      )}
       {group && (
         <label className="circle-name">
           Circle name
@@ -610,10 +597,14 @@ export function MessageEditor({
   );
 }
 export function Details({
+  preview,
+  onChanged,
   conversation,
   me,
   onClose,
 }: {
+  preview: boolean;
+  onChanged: () => Promise<void>;
   conversation: Conversation;
   me: string;
   onClose: () => void;
@@ -675,6 +666,15 @@ export function Details({
           ))}
         </div>
       </div>
+      {group && (
+        <GroupControls
+          key={conversation.id}
+          conversation={conversation}
+          me={me}
+          preview={preview}
+          onChanged={onChanged}
+        />
+      )}
       {!group && (
         <ProfileSong path={other?.song_path} title={other?.song_title} />
       )}

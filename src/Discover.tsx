@@ -15,6 +15,15 @@ import {
 import { Avatar, Brand, Spinner } from "./components";
 import { PersonaEditor, PersonaViewer } from "./Personas";
 import { discovery } from "./lib/discover";
+import {
+  commonInterests,
+  interestOptions,
+  maxInterests,
+  normalizeInterests,
+  normalizeInterest,
+  maxTagLength,
+} from "./lib/interests";
+import type { Interest } from "./lib/interests";
 import type { Persona, RandomMessage, RandomState } from "./lib/discover";
 import { errorText, validMessage } from "./lib/types";
 type Pending = { id: string; body: string; session: string };
@@ -25,6 +34,20 @@ function restorePending(userId: string): Pending | null {
     );
   } catch {
     return null;
+  }
+}
+function restoreInterests(userId: string): {
+  tags: Interest[];
+  sharedOnly: boolean;
+} {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(`kindred-interests:${userId}`) || "null",
+    );
+    const tags = normalizeInterests(saved?.tags);
+    return { tags, sharedOnly: tags.length > 0 && saved?.sharedOnly === true };
+  } catch {
+    return { tags: [], sharedOnly: false };
   }
 }
 export default function Discover({
@@ -42,6 +65,42 @@ export default function Discover({
   stateRef.current = state;
   const [loaded, setLoaded] = useState(false);
   const [anonymous, setAnonymous] = useState(true);
+  const [interests, setInterests] = useState<Interest[]>(
+    () => restoreInterests(userId).tags,
+  );
+  const [customTag, setCustomTag] = useState("");
+  const [tagError, setTagError] = useState("");
+  const [sharedOnly, setSharedOnly] = useState(
+    () => restoreInterests(userId).sharedOnly,
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        `kindred-interests:${userId}`,
+        JSON.stringify({ tags: interests, sharedOnly }),
+      );
+    } catch {
+      /* Preferences work in memory if storage is unavailable. */
+    }
+  }, [interests, sharedOnly, userId]);
+  function addCustomTag() {
+    const tag = normalizeInterest(customTag);
+    if (!tag) {
+      setTagError("Use 2–30 letters or numbers, spaces, or hyphens.");
+      return;
+    }
+    if (interests.includes(tag)) {
+      setTagError("You’ve already selected that interest.");
+      return;
+    }
+    if (interests.length >= maxInterests) {
+      setTagError("Remove an interest before adding another.");
+      return;
+    }
+    setInterests([...interests, tag]);
+    setCustomTag("");
+    setTagError("");
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [messages, setMessages] = useState<RandomMessage[]>([]);
@@ -99,6 +158,10 @@ export default function Discover({
         setDraft("");
         setScore(null);
         setBlock(false);
+      }
+      if (next.status === "waiting" && next.search_interests) {
+        setInterests(normalizeInterests(next.search_interests));
+        setSharedOnly(next.shared_only === true);
       }
       setState(next);
       setMessages(items);
@@ -174,7 +237,7 @@ export default function Discover({
     await act(async () => {
       setPending(null);
       setMessages([]);
-      const next = await service.join(anonymous);
+      const next = await service.join(anonymous, interests, sharedOnly);
       setState(next);
     });
   }
@@ -226,7 +289,11 @@ export default function Discover({
       setBlock(false);
       setPending(null);
       setMessages([]);
-      setState(next ? await service.join(anonymous) : { status: "idle" });
+      setState(
+        next
+          ? await service.join(anonymous, interests, sharedOnly)
+          : { status: "idle" },
+      );
     });
   }
   async function loadOlder() {
@@ -323,6 +390,130 @@ export default function Discover({
                 <span>Your regular profile.</span>
               </button>
             </div>
+            <fieldset
+              className="interest-picker"
+              disabled={state.status === "waiting" || busy}
+            >
+              <legend>Find your people</legend>
+              <div className="interest-picker-intro">
+                <p>
+                  Pick up to five interests. We’ll look for something in common.
+                </p>
+                <span aria-live="polite">
+                  {interests.length}/{maxInterests}
+                </span>
+              </div>
+              <div className="interest-options" aria-label="Choose interests">
+                {interestOptions.map((tag) => {
+                  const selected = interests.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`interest-chip ${selected ? "selected" : ""}`}
+                      aria-pressed={selected}
+                      disabled={!selected && interests.length >= maxInterests}
+                      onClick={() => {
+                        const next = selected
+                          ? interests.filter((t) => t !== tag)
+                          : [...interests, tag];
+                        setInterests(next);
+                        if (!next.length) setSharedOnly(false);
+                      }}
+                    >
+                      <span aria-hidden="true">{selected ? "✓" : "+"}</span>
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+              {!!interests.filter(
+                (tag) => !interestOptions.some((option) => option === tag),
+              ).length && (
+                <div
+                  className="custom-interest-tags"
+                  aria-label="Your custom interests"
+                >
+                  {interests
+                    .filter(
+                      (tag) =>
+                        !interestOptions.some((option) => option === tag),
+                    )
+                    .map((tag) => (
+                      <button
+                        type="button"
+                        key={tag}
+                        className="interest-chip selected"
+                        aria-label={`Remove ${tag} interest`}
+                        onClick={() => {
+                          const next = interests.filter((t) => t !== tag);
+                          setInterests(next);
+                          setTagError("");
+                          if (!next.length) setSharedOnly(false);
+                        }}
+                      >
+                        {tag}
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    ))}
+                </div>
+              )}
+              <div className="custom-interest-entry">
+                <label htmlFor="custom-interest">Add your own interest</label>
+                <div>
+                  <input
+                    id="custom-interest"
+                    type="text"
+                    value={customTag}
+                    maxLength={maxTagLength}
+                    placeholder="e.g. indie music or astronomy"
+                    aria-describedby="custom-interest-help"
+                    aria-invalid={!!tagError}
+                    onChange={(e) => {
+                      setCustomTag(e.target.value);
+                      setTagError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        addCustomTag();
+                      }
+                    }}
+                  />
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={addCustomTag}
+                    disabled={!customTag.trim()}
+                    aria-label="Add custom interest"
+                  >
+                    Add
+                  </button>
+                </div>
+                <p id="custom-interest-help">
+                  2–30 letters or numbers. Spaces and hyphens are welcome.
+                </p>
+                {tagError && (
+                  <p className="custom-interest-error" role="alert">
+                    {tagError}
+                  </p>
+                )}
+              </div>
+              <label className="interest-strict">
+                <input
+                  type="checkbox"
+                  checked={sharedOnly}
+                  disabled={!interests.length}
+                  onChange={(e) => setSharedOnly(e.target.checked)}
+                />
+                Only match people with a shared interest
+              </label>
+              <p className="interest-hint">
+                {sharedOnly
+                  ? "We’ll wait for a shared-interest match. This may take longer."
+                  : "Shared interests come first. Other eligible people can still match."}
+              </p>
+            </fieldset>
             {state.status === "waiting" ? (
               <div className="waiting-card" role="status">
                 <div className="match-pulse">
@@ -331,7 +522,9 @@ export default function Discover({
                 <h2>Finding your next conversation…</h2>
                 <p>
                   Keep this page open. We’ll connect you when a compatible
-                  person is available.
+                  person is available.{" "}
+                  {state.shared_only &&
+                    "Your match will share at least one selected interest."}
                 </p>
                 <button
                   className="button secondary"
@@ -353,7 +546,7 @@ export default function Discover({
             )}
             <div className="lobby-notes">
               <span>
-                <Shield size={16} /> Phone verified. Identity stays yours.
+                <Shield size={16} /> Email verified. Identity stays yours.
               </span>
               <span>
                 <Star size={16} /> Private feedback shapes better matches.
@@ -426,6 +619,24 @@ export default function Discover({
                 <div className="random-welcome">
                   <Sparkles size={18} />
                   <p>A new conversation. A fresh start.</p>
+                  {commonInterests(
+                    state.self_profile?.interests,
+                    state.peer?.interests,
+                  ).length > 0 && (
+                    <div className="shared-interests">
+                      <small>You both like</small>
+                      <div className="interest-tags">
+                        {commonInterests(
+                          state.self_profile?.interests,
+                          state.peer?.interests,
+                        ).map((tag) => (
+                          <span className="interest-tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <span className="session-identity">
                     You’re {state.self_profile?.display_name} ·{" "}
                     {state.self_profile?.anonymous

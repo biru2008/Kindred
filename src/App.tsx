@@ -1,3 +1,4 @@
+import { InvitationInbox } from "./GroupManagement";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -25,7 +26,7 @@ import {
   X,
 } from "lucide-react";
 import Discover from "./Discover";
-import { PhoneGate } from "./PhoneAuth";
+import { EmailGate } from "./EmailAuth";
 import { PersonaEditor } from "./Personas";
 import { api } from "./lib/api";
 import { useChatTools } from "./lib/webmcp";
@@ -176,9 +177,9 @@ export default function App() {
   return preview ? (
     content
   ) : (
-    <PhoneGate key={userId} onExit={exit}>
+    <EmailGate key={userId} onExit={exit}>
       {content}
-    </PhoneGate>
+    </EmailGate>
   );
 }
 
@@ -765,6 +766,7 @@ function Workspace({
               </button>
             </div>
             <p>Your people, a little closer.</p>
+            <InvitationInbox preview={preview} me={userId} onChanged={refresh} />
             <button className="discover-entry" onClick={onDiscover}>
               <Shuffle size={17} />
               <span>Meet someone new</span>
@@ -1418,6 +1420,8 @@ function Workspace({
         {details && activeConversation && (
           <Details
             conversation={activeConversation}
+            preview={preview}
+            onChanged={refresh}
             me={userId}
             onClose={() => setDetails(false)}
           />

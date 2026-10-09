@@ -3,12 +3,33 @@ export async function testDiscovery(db, { A, B, C, as, value, check }) {
   await db.exec("reset role");
   const U = "00000000-0000-4000-8000-000000000099";
   await db.query(
-    "insert into auth.users(id,raw_user_meta_data) values($1,'{}')",
+    "insert into auth.users(id,raw_user_meta_data,email) values($1,'{}','unconfirmed@example.com')",
     [U],
+  );
+  await check("Accounts require an email address", async () => {
+    await assert.rejects(
+      () =>
+        db.query(
+          "insert into auth.users(id,raw_user_meta_data) values('00000000-0000-4000-8000-000000000098','{}')",
+        ),
+      /email address is required/,
+    );
+  });
+  await check(
+    "The Auth email uniqueness constraint rejects case variants",
+    async () => {
+      await assert.rejects(
+        () =>
+          db.query(
+            "insert into auth.users(id,raw_user_meta_data,email,email_confirmed_at) values('00000000-0000-4000-8000-000000000097','{}','UNCONFIRMED@example.com',now())",
+          ),
+        /unique/,
+      );
+    },
   );
   await as(U);
   await check(
-    "Phone-only signup generates a profile without requiring email metadata",
+    "Email signup generates a profile without requiring profile metadata",
     async () => {
       await db.exec("reset role");
       assert.ok(
@@ -29,7 +50,7 @@ export async function testDiscovery(db, { A, B, C, as, value, check }) {
       );
       await assert.rejects(() => db.query("select public.join_random(true)"));
       assert.equal(
-        (await value("select public.account_status() v")).phone_verified,
+        (await value("select public.account_status() v")).email_verified,
         false,
       );
     },
@@ -222,7 +243,7 @@ export async function testDiscovery(db, { A, B, C, as, value, check }) {
   );
   for (const r of raters) {
     await db.query(
-      "insert into auth.users(id,raw_user_meta_data,phone,phone_confirmed_at) values($1::uuid,'{}','91'||right($1::text,12),now())",
+      "insert into auth.users(id,raw_user_meta_data,email,email_confirmed_at) values($1::uuid,'{}',$1::text||'@example.com',now())",
       [r],
     );
     await db.query(

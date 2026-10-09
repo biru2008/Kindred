@@ -1,6 +1,9 @@
 import { supabase } from "./supabase";
+import { commonInterests, normalizeInterests } from "./interests";
+import type { Interest } from "./interests";
 import type { Color } from "./types";
 export type Persona = {
+  interests?: Interest[];
   display_name: string;
   bio: string;
   color: Color;
@@ -25,6 +28,8 @@ export type RandomState = {
   started_at?: string;
   ended_at?: string | null;
   feedback_done?: boolean;
+  search_interests?: Interest[];
+  shared_only?: boolean;
 };
 export async function call<T>(
   name: string,
@@ -99,6 +104,7 @@ const demoPeers = [
     color: "rose",
     anonymous: true,
     score: 4.4,
+    interests: ["Music", "Art", "Books", "Movies", "indie music"],
   },
   {
     display_name: "Forest echo",
@@ -106,6 +112,7 @@ const demoPeers = [
     color: "fern",
     anonymous: true,
     score: 3.3,
+    interests: ["Outdoors", "Science", "Philosophy", "Music", "astronomy"],
   },
   {
     display_name: "Nina Patel",
@@ -114,6 +121,7 @@ const demoPeers = [
     color: "amber",
     anonymous: false,
     score: 4.8,
+    interests: ["Travel", "Food", "Photography", "Gaming", "Anime"],
   },
 ] as const;
 export const discovery = (preview: boolean) => ({
@@ -165,22 +173,45 @@ export const discovery = (preview: boolean) => ({
   },
   state: async (): Promise<RandomState> =>
     preview ? data().state : call("random_state"),
-  join: async (anonymous: boolean): Promise<RandomState> => {
-    if (!preview) return call("join_random", { anon_mode: anonymous });
+  join: async (
+    anonymous: boolean,
+    interests: Interest[] = [],
+    sharedOnly = false,
+  ): Promise<RandomState> => {
+    const selected = normalizeInterests(interests);
+    if (!preview)
+      return call("join_random", {
+        anon_mode: anonymous,
+        interests: selected,
+        shared_only: sharedOnly,
+      });
     const d = data();
     if (d.state.status === "matched" || d.state.status === "ended")
       return d.state;
     let candidates = demoPeers
       .map((p, i) => ({ ...p, i }))
-      .filter((p) => !d.seen.includes(p.i) && !d.blocked?.includes(p.i));
+      .filter(
+        (p) =>
+          !d.seen.includes(p.i) &&
+          !d.blocked?.includes(p.i) &&
+          (!sharedOnly || commonInterests(selected, p.interests).length > 0),
+      );
     if (!candidates.length) {
       d.seen = [];
       candidates = demoPeers
         .map((p, i) => ({ ...p, i }))
-        .filter((p) => !d.blocked?.includes(p.i));
+        .filter(
+          (p) =>
+            !d.blocked?.includes(p.i) &&
+            (!sharedOnly || commonInterests(selected, p.interests).length > 0),
+        );
     }
     if (!candidates.length) {
-      d.state = { status: "waiting" };
+      d.state = {
+        status: "waiting",
+        search_interests: selected,
+        shared_only: sharedOnly,
+      };
       write(d);
       return d.state;
     }
@@ -188,7 +219,10 @@ export const discovery = (preview: boolean) => ({
     const peerScore = (p: (typeof candidates)[number]) =>
       (p.score * 5 + (d.votes?.[p.i] || p.score)) / 6;
     candidates.sort(
-      (a, b) => Math.abs(peerScore(a) - score) - Math.abs(peerScore(b) - score),
+      (a, b) =>
+        commonInterests(selected, b.interests).length -
+          commonInterests(selected, a.interests).length ||
+        Math.abs(peerScore(a) - score) - Math.abs(peerScore(b) - score),
     );
     const p = candidates[0];
     d.seen.push(p.i);
@@ -197,15 +231,17 @@ export const discovery = (preview: boolean) => ({
       status: "matched",
       session_id: crypto.randomUUID(),
       self_id: crypto.randomUUID(),
-      self_profile: structuredClone(
-        d.personas[anonymous ? "anonymous" : "normal"],
-      ),
+      self_profile: {
+        ...structuredClone(d.personas[anonymous ? "anonymous" : "normal"]),
+        interests: selected,
+      },
       peer: {
         id: crypto.randomUUID(),
         display_name: p.display_name,
         bio: p.bio,
         color: p.color,
         anonymous: p.anonymous,
+        interests: [...p.interests],
         song_path: null,
         song_title: "",
       },

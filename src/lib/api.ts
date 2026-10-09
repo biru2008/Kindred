@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 import { demo } from "./demo";
-import type { Conversation, Message, Profile } from "./types";
+import type { Conversation, Message, Profile, GroupInvitation } from "./types";
 function client() {
   if (!supabase)
     throw new Error("The live workspace has not been configured yet.");
@@ -28,6 +28,13 @@ export function api(preview: boolean) {
       if (error) throw error;
       return data as Profile;
     },
+    invitations: () => rpc<GroupInvitation[]>("list_group_invitations"),
+    inviteGroup: (conversation: string, person: string) =>
+      rpc<void>("invite_group", { conversation, person }),
+    respondInvitation: (invitation: string, accept: boolean) =>
+      rpc<void>("respond_group_invitation", { invitation, accept }),
+    manageGroup: (conversation: string, person: string, action: string) =>
+      rpc<void>("manage_group", { conversation, person, action }),
     conversations: () => rpc<Conversation[]>("list_conversations"),
     history: (id: string, before?: Message) =>
       rpc<Message[]>("message_history", {
@@ -92,6 +99,7 @@ export function api(preview: boolean) {
             "conversations",
             "conversation_members",
             "profiles",
+            "group_invitations",
           ])
             c.on(
               "postgres_changes",

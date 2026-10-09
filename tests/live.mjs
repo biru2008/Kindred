@@ -1,4 +1,4 @@
-/** Run only against a configured test project with three existing, email-confirmed and phone-verified accounts.
+/** Run only against a configured test project with three existing, email-confirmed accounts.
  * Sends a clearly marked test message between A and B, then soft-deletes it.
  * Never uses the service-role key and never outputs passwords or tokens.
  */
@@ -41,9 +41,9 @@ try {
       const status = await c.rpc("account_status");
       if (status.error) throw status.error;
       assert.equal(
-        status.data.phone_verified,
+        status.data.email_verified,
         true,
-        `Test account ${suffix} must verify its phone in the app first.`,
+        `Test account ${suffix} must confirm its email first.`,
       );
       return data.user;
     }),
