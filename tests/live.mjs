@@ -5,7 +5,9 @@
 import { createClient } from "@supabase/supabase-js";
 import assert from "node:assert/strict";
 const url = process.env.VITE_SUPABASE_URL;
-const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const key =
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY;
 const required = [
   "SUPABASE_TEST_EMAIL_A",
   "SUPABASE_TEST_PASSWORD_A",
@@ -61,17 +63,23 @@ try {
   let resolveDelivery;
   let resolveReady;
   let rejectReady;
-  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const ready = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
   let receivedAt;
   const delivered = new Promise((resolve) => {
     resolveDelivery = resolve;
   });
   channel = b
-    .channel(`updates:${users[1].id}`, { config: { private: true, broadcast: { replication_ready: true } } })
+    .channel(`updates:${users[1].id}`, {
+      config: { private: true, broadcast: { replication_ready: true } },
+    })
     .on("system", {}, (payload) => {
       if (!["system", "postgres_changes"].includes(payload.extension)) return;
       if (payload.status === "ok") resolveReady();
-      else if (payload.status === "error") rejectReady(new Error("Database replication is not ready."));
+      else if (payload.status === "error")
+        rejectReady(new Error("Database replication is not ready."));
     })
     .on(
       "postgres_changes",
@@ -98,7 +106,16 @@ try {
         ),
       20000,
     );
-    ready.then(() => { clearTimeout(timeout); resolve(); }, (error) => { clearTimeout(timeout); reject(error); });
+    ready.then(
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
     channel.subscribe((status) => {
       if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
         rejectReady(new Error("Realtime channel could not connect."));
@@ -126,7 +143,9 @@ try {
   ]).finally(() => clearTimeout(deliveryTimer));
   assert.equal(received.sender_id, users[0].id);
   assert.equal(received.body, body);
-  console.log(`PASS real WebSocket delivery between two signed-in accounts (${Math.round(receivedAt - sentAt)} ms from send request)`);
+  console.log(
+    `PASS real WebSocket delivery between two signed-in accounts (${Math.round(receivedAt - sentAt)} ms from send request)`,
+  );
   const retry = await a.rpc("send_message", {
     conversation: room,
     message_id: messageId,
@@ -171,7 +190,7 @@ try {
     }
   }
   if (channel) await clients[1].removeChannel(channel);
-  await Promise.all(clients.map((c) => c.auth.signOut()));
+  await Promise.all(clients.map((c) => c.auth.signOut({ scope: "local" })));
   if (succeeded && process.exitCode !== 1)
     console.log("Live verification passed. Test message was soft-deleted.");
 }

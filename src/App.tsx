@@ -29,6 +29,7 @@ import Discover from "./Discover";
 import { EmailGate } from "./EmailAuth";
 import { PersonaEditor } from "./Personas";
 import { api } from "./lib/api";
+import { notifySavedMessage } from "./lib/liveUpdates";
 import { useChatTools } from "./lib/webmcp";
 import { demoUser } from "./lib/demo";
 import { isConfigured, supabase } from "./lib/supabase";
@@ -256,33 +257,62 @@ function Workspace({
   const nearBottom = useRef(true);
   const requestSeq = useRef(0);
   const refreshSeq = useRef(0);
+  const historyFlight = useRef<{
+    id: string;
+    seq: number;
+    again: boolean;
+  } | null>(null);
+  const workspaceFlight = useRef<{ seq: number; again: boolean } | null>(null);
   const activeConversation = conversations.find((c) => c.id === active);
   const notify = useCallback((message: string) => setToast(message), []);
-  const refresh = useCallback(async () => {
-    const seq = ++refreshSeq.current;
-    try {
-      const [person, items] = await Promise.all([
-        service.profile(),
-        service.conversations(),
-      ]);
-      if (seq !== refreshSeq.current) return;
-      setMe(person);
-      setConversations(items);
-      setLoadError("");
-      setActive((current) =>
-        current && items.some((c) => c.id === current)
-          ? current
-          : items[0]?.id || null,
-      );
-    } catch (e) {
-      if (seq === refreshSeq.current) setLoadError(errorText(e));
-    } finally {
-      if (seq === refreshSeq.current) setLoading(false);
-    }
-  }, [service]);
+  const refresh = useCallback(
+    async function refreshWorkspace() {
+      if (workspaceFlight.current?.seq === refreshSeq.current) {
+        workspaceFlight.current.again = true;
+        return;
+      }
+      const seq = ++refreshSeq.current;
+      const flight = { seq, again: false };
+      workspaceFlight.current = flight;
+      try {
+        const [person, items] = await Promise.all([
+          service.profile(),
+          service.conversations(),
+        ]);
+        if (seq !== refreshSeq.current) return;
+        setMe(person);
+        setConversations(items);
+        setLoadError("");
+        setActive((current) =>
+          current && items.some((c) => c.id === current)
+            ? current
+            : items[0]?.id || null,
+        );
+      } catch (e) {
+        if (seq === refreshSeq.current) setLoadError(errorText(e));
+      } finally {
+        if (seq === refreshSeq.current) setLoading(false);
+        if (workspaceFlight.current === flight) {
+          workspaceFlight.current = null;
+          if (flight.again && seq === refreshSeq.current)
+            void refreshWorkspace();
+        }
+      }
+    },
+    [service],
+  );
   const refreshMessages = useCallback(
-    async (id: string, _replace = false) => {
+    async function refreshHistory(id: string, _replace = false) {
+      if (
+        historyFlight.current?.id === id &&
+        historyFlight.current.seq === requestSeq.current
+      ) {
+        historyFlight.current.again = true;
+        return;
+      }
       const seq = ++requestSeq.current;
+      const flight = { id, seq, again: false };
+      historyFlight.current = flight;
       const earliest = messagesRef.current.find(
         (m) => m.conversation_id === id && !m.status,
       );
@@ -321,6 +351,15 @@ function Workspace({
       } finally {
         if (activeRef.current === id && seq === requestSeq.current)
           setMessageLoading(false);
+        if (historyFlight.current === flight) {
+          historyFlight.current = null;
+          if (
+            flight.again &&
+            activeRef.current === id &&
+            seq === requestSeq.current
+          )
+            void refreshHistory(id);
+        }
       }
     },
     [service, saveOutbox],
@@ -330,33 +369,47 @@ function Workspace({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let updatesReady = false;
     let lastReconcile = Date.now();
-    const unsub = service.subscribe(() => {
-      // Coalesce bursts without postponing delivery indefinitely during activity.
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        void refresh();
-        if (activeRef.current) void refreshMessages(activeRef.current);
-      }, 100);
-    }, (state) => {
-      updatesReady = state === "connected";
-      setUpdateConnection(state);
-    });
+    const unsub = service.subscribe(
+      () => {
+        // Coalesce bursts without postponing delivery indefinitely during activity.
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = undefined;
+          void refresh();
+          if (activeRef.current) void refreshMessages(activeRef.current);
+        }, 100);
+      },
+      (state) => {
+        updatesReady = state === "connected";
+        setUpdateConnection(state);
+      },
+    );
     const focus = () => {
       lastReconcile = Date.now();
       void refresh();
       if (activeRef.current) void refreshMessages(activeRef.current);
     };
     window.addEventListener("focus", focus);
+    const visible = () => {
+      if (!document.hidden) focus();
+    };
+    document.addEventListener("visibilitychange", visible);
     const interval = setInterval(() => {
-      const interval = updatesReady ? 30000 : 5000;
-      if (!document.hidden && navigator.onLine && Date.now() - lastReconcile >= interval) focus();
+      // A healthy socket does not prove every database event is reaching us.
+      const interval = activeRef.current || !updatesReady ? 5000 : 30000;
+      if (
+        !document.hidden &&
+        navigator.onLine &&
+        Date.now() - lastReconcile >= interval
+      )
+        focus();
     }, 5000);
     return () => {
       unsub();
       clearTimeout(timer);
       clearInterval(interval);
       window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", visible);
       refreshSeq.current++;
       requestSeq.current++;
     };
@@ -408,6 +461,7 @@ function Workspace({
     if (!active || preview || !supabase) return;
     setConnection("connecting");
     let disposed = false;
+    let messageHintTimer: ReturnType<typeof setTimeout> | undefined;
     const c = supabase.channel(`conversation:${active}`, {
       config: {
         private: true,
@@ -425,6 +479,16 @@ function Workspace({
           ...old,
           [payload.user_id]: payload.active ? Date.now() : 0,
         }));
+    });
+    c.on("broadcast", { event: "message_saved" }, ({ payload }) => {
+      if (disposed || payload?.conversation_id !== active || messageHintTimer)
+        return;
+      messageHintTimer = setTimeout(() => {
+        messageHintTimer = undefined;
+        if (disposed) return;
+        void refreshMessages(active);
+        void refresh();
+      }, 100);
     });
     c.subscribe((status) => {
       if (disposed) return;
@@ -451,11 +515,12 @@ function Workspace({
     );
     return () => {
       disposed = true;
+      clearTimeout(messageHintTimer);
       clearInterval(interval);
       channel.current = null;
       void supabase!.removeChannel(c);
     };
-  }, [active, preview, userId, refreshMessages]);
+  }, [active, preview, userId, refreshMessages, refresh]);
   useEffect(() => {
     const newest = messages.filter((m) => !m.status).at(-1);
     if (
@@ -572,6 +637,7 @@ function Workspace({
   async function deliver(id: string, body: string, conversation: string) {
     try {
       const sent = await service.send(conversation, id, body);
+      void notifySavedMessage(channel.current, conversation);
       outbox.current = outbox.current.filter((m) => m.id !== id);
       saveOutbox();
       if (activeRef.current === conversation)
@@ -779,7 +845,11 @@ function Workspace({
               </button>
             </div>
             <p>Your people, a little closer.</p>
-            <InvitationInbox preview={preview} me={userId} onChanged={refresh} />
+            <InvitationInbox
+              preview={preview}
+              me={userId}
+              onChanged={refresh}
+            />
             <button className="discover-entry" onClick={onDiscover}>
               <Shuffle size={17} />
               <span>Meet someone new</span>
@@ -989,7 +1059,10 @@ function Workspace({
                   </button>
                 </div>
               </header>
-              {(!online || (!preview && (connection === "reconnecting" || updateConnection !== "connected"))) && (
+              {(!online ||
+                (!preview &&
+                  (connection === "reconnecting" ||
+                    updateConnection !== "connected"))) && (
                 <div className="connection-banner" role="status">
                   <WifiOff size={16} />
                   {!online
@@ -1503,6 +1576,7 @@ function Workspace({
           preview={preview}
           onClose={() => setEditing(null)}
           onSaved={() => {
+            void notifySavedMessage(channel.current, editing.conversation_id);
             if (active) void refreshMessages(active);
             notify("Message updated");
           }}
@@ -1535,6 +1609,10 @@ function Workspace({
                 setDeleteBusy(true);
                 try {
                   await service.remove(deleting.id);
+                  void notifySavedMessage(
+                    channel.current,
+                    deleting.conversation_id,
+                  );
                   setDeleting(null);
                   if (active) void refreshMessages(active);
                   notify("Message deleted");

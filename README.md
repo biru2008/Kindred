@@ -159,7 +159,7 @@ pnpm test:database
 pnpm build
 ```
 
-The latest recorded checks passed: **11 unit tests and 77 database checks**, for **88 total**, plus the production build. The database suite applies all five migrations in an isolated PGlite PostgreSQL runtime with Auth/Realtime/Storage stubs. It checks membership isolation, message retries, anonymous identity separation, matching, ratings, blocking, tags, invitations, role permissions, capacity, and access revocation.
+The latest recorded checks passed: **13 unit tests and 77 database checks**, for **90 total**, plus the production build. The database suite applies all five migrations in an isolated PGlite PostgreSQL runtime with Auth/Realtime/Storage stubs. It checks membership isolation, message retries, anonymous identity separation, matching, ratings, blocking, tags, invitations, role permissions, capacity, and access revocation.
 
 These checks do not emulate hosted email delivery, Storage uploads, or real WebSocket delivery. The interface has been checked in local preview; the submitted deployment must be tested separately.
 
@@ -186,11 +186,17 @@ This creates/reuses the A–B direct conversation, sends a marked test message, 
 
 ### Delayed messages and account sessions
 
-The message-update connection is monitored separately from presence/typing. While database updates are not ready, visible online windows reconcile saved messages every five seconds; healthy connections retain a 30-second reconciliation check for missed events. Five seconds is a polling interval, not a delivery-time guarantee. Reconnection also reloads persisted history.
+The message-update connection is monitored separately from presence/typing. After a successful send, edit, or deletion, the sender emits a content-free `message_saved` hint on the current private conversation channel. Members with that chat open fetch persisted history through the normal authorization checks. This path uses WebSocket Broadcast without waiting for Postgres Changes. Other conversations still use database events and reconciliation.
+
+Visible online windows with an open chat reconcile every five seconds, even if the socket reports healthy; with no open chat, healthy connections reconcile every 30 seconds. Refresh requests are coalesced so slow responses can finish instead of being discarded by each new poll. Five seconds is a polling interval, not a delivery-time guarantee. Reconnection and returning to the visible tab also reload persisted history.
 
 If messages only arrive through polling, run `supabase/realtime-diagnostic.sql` in the Supabase SQL Editor and inspect Logs → Realtime. All five application tables should be published with authenticated SELECT access and row security enabled. The diagnostic is read-only; do not disable row security to troubleshoot.
 
 Ordinary tabs/windows within one browser profile share sign-in state. Regular and incognito sessions should be separate, as should separate browser profiles/devices. Sign-out ends only the current Supabase session. An auth initialization guard prevents an older session lookup from overwriting a newer auth event; this does not establish the cause of any reported cross-window account switch.
+
+### Separate broadcast delivery test
+
+With the same ignored `.env` configuration and two distinct disposable confirmed accounts A and B, run `pnpm test:broadcast`. It sends three marked messages and reports database save time, private Broadcast notification plus authorized history-fetch time, and total time. It deliberately does not subscribe to Postgres Changes, so this isolates the second delivery path. Messages are soft-deleted afterward. This hosted test has not yet been run with the deployment's accounts; local unit-test results do not establish production latency.
 
 ### Manual acceptance checks
 
