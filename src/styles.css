@@ -339,15 +339,15 @@ textarea {
   align-items: center;
   justify-content: center;
   border-radius: 14px;
-  color: #A33757;
+  color: #FFBB94;
   position: relative;
 }
 .rail-button:hover {
-  background: #852E4E0d;
+  background: #A33757;
   color: white;
 }
 .rail-button.active {
-  background: #852E4E;
+  background: #A33757;
   color: #FFF9F5;
 }
 .rail-unread {
@@ -1602,14 +1602,15 @@ textarea {
   display: flex;
   gap: 14px;
   align-items: center;
-  background: #852E4E0e;
-  border: 1px solid #852E4E12;
+  background: #FFF0E7;
+  color: #852E4E;
+  border: 1px solid #FB9590;
   padding: 19px 18px;
   border-radius: 16px 16px 16px 4px;
   max-width: 420px;
 }
 .story-message small {
-  color: #A33757;
+  color: #852E4E;
   font-size: 0.7rem;
 }
 .story-message p {
@@ -1676,10 +1677,10 @@ textarea {
   display: block;
   width: 100%;
   margin-top: 9px;
-  border: 1px solid #FFE0D0;
+  border: 1px solid #A33757;
   border-radius: 9px;
   padding: 13px 14px;
-  background: #FFF9F5;
+  background: #FFFFFF;
   font-size: 0.875rem;
   color: #852E4E;
 }
@@ -3595,7 +3596,7 @@ h3 {
 .auth-story .story-center > p { color: #FFE0D0; }
 .fern, .peach, .amber { background: var(--peach); color: var(--plum); }
 .lavender, .blue { background: var(--coral); color: var(--plum); }
-.rose { background: var(--rose); color: #FFF9F5; }
+.rose { background: var(--coral); color: var(--plum); }
 .mine .message-bubble { background: var(--berry); color: #FFF9F5; }
 .lobby-label { background: var(--peach); color: var(--plum); }
 .interest-chip.selected { background: var(--berry); color: #FFF9F5; border-color: var(--berry); }
@@ -3637,3 +3638,13 @@ h3 {
 /* Private categorized feedback, consent-based connections, and reconnect status. */
 .random-connection-card{background:#FFF0E7;border:1px solid #FB9590;border-radius:18px;padding:20px;margin:18px 0;color:#852E4E}.random-connection-card h3{display:flex;align-items:center;gap:8px;font-size:18px;margin:0 0 10px}.random-connection-card p{font-size:13px;line-height:1.65}.random-connection-card small{display:block;font-size:11px;line-height:1.6;margin-top:10px;opacity:.85}.random-connection-card .button{width:100%;margin-top:8px}.random-connection-card .text-button{margin-top:8px}.preview-simulation{font-size:11px;margin:6px 14px;padding:8px;background:#FFF0E7;border-radius:8px;color:#A33757}.random-connection-card .preview-simulation{margin:10px 0 0}.random-reconnect{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 18px;background:#FFBB9433;color:#852E4E;font-size:12px;line-height:1.6}.random-reconnect .text-button{font-size:12px;white-space:nowrap}.feedback-categories{border:0;padding:0;margin:16px 0 10px;text-align:left}.feedback-categories legend{font-weight:700;font-size:13px;margin-bottom:10px}.feedback-categories>div{display:flex;flex-wrap:wrap;gap:7px}.feedback-categories label{display:flex;gap:6px;align-items:center;background:#FFF0E7;border:1px solid #FB9590;border-radius:10px;padding:8px 10px;font-size:12px;cursor:pointer}.feedback-categories label:has(input:checked){background:#FFBB94;border-color:#A33757}.feedback-categories input{accent-color:#A33757}.feedback-note{font-size:12px!important;line-height:1.6!important}.random-end-reason{font-size:12px!important;color:#A33757}.rating-panel{max-height:55vh;overflow:auto}
 @media(max-width:760px){.feedback-categories label{font-size:11px;padding:7px 8px}.random-connection-card{padding:14px}}
+
+/* Keep readable surfaces distinct throughout the peach/rose theme. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea { color: var(--plum); caret-color: var(--plum); }
+input::placeholder, textarea::placeholder { color: var(--berry); opacity: 1; }
+.modal label input:not([type="checkbox"]):not([type="radio"]), .modal label textarea, .email-form input, .custom-interest-entry input, .group-controls input { background: #FFFFFF; border-color: var(--berry); }
+.form-error { background: #FFE0D0; color: var(--plum); border: 1px solid var(--berry); }
+.form-success { background: #FFF0E7; color: var(--plum); border: 1px solid var(--berry); }
+.theirs .message-bubble, .random-message:not(.own) p { background: #FFFFFF; color: var(--plum); border: 1px solid #FB9590; }
+.mine .message-bubble { border-color: var(--berry); }
+::selection { background: #FFBB94; color: #852E4E; }
