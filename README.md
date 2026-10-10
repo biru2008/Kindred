@@ -2,8 +2,6 @@
 
 Kindred is a real-time, web-based chat application built for the **First Commit hackathon by Kamand Prompt, IIT Mandi**. It combines private direct messages and managed group conversations with interest-based stranger matching and separate anonymous profiles.
 
-The current application uses **email and password authentication only**. Phone sign-up and SMS verification are not part of this release.
-
 ## Features
 
 ### Accounts and profiles
@@ -234,11 +232,20 @@ Use separate browsers or devices and real accounts:
 - Check anonymous profiles, end a conversation, provide private feedback, and test blocking.
 - Upload/play profile music and test the mobile layout.
 
-## Judge access without SMTP
+## Judge test accounts
 
-For a controlled demo, the project administrator can create dedicated test accounts through Supabase Auth administration and mark those accounts confirmed. Give judges distinct account credentials privately. This allows email/password sign-in without sending confirmation emails; it does not demonstrate public registration or verification of email ownership.
+This deployment uses Supabase's free plan with its built-in email provider and no custom SMTP service. The built-in provider allows **two authentication emails per hour across the project**, and restricts delivery to project-team email addresses. This can prevent judges from registering and receiving confirmation emails reliably. It is an email-sending limit, **not a limit of two accounts or two password sign-ins per hour**. See [Supabase authentication rate limits](https://supabase.com/docs/guides/auth/rate-limits) and [built-in email provider restrictions](https://supabase.com/docs/guides/auth/auth-smtp).
 
-Keep normal email confirmation enabled. Do not grant judges Supabase organization/dashboard access just to let them use the app. Public sign-up testing still needs a configured email provider. Explain the test-account arrangement in the submission instructions.
+We provide two dedicated, pre-confirmed test accounts for judges to use through the app's **Sign in** form. Existing confirmed accounts can sign in using their email and password without requesting a confirmation email.
+
+| Test account | Email | Password |
+|---|---|---|
+| Judge account 1 | minenstudy@gmail.com | 123456789 |
+| Judge account 2 | ytbhargav08@gmail.com | j6H6DnsCqyZ5Jcz |
+
+To test messaging and mutual connections, sign in to account 1 on one device or browser profile and account 2 on another. Use these accounts instead of creating new accounts or requesting password-reset emails during judging. The test accounts must be created and marked confirmed by the project administrator before sharing these details.
+
+These credentials are for dedicated demo accounts only; do not add personal or administrator credentials. Normal email confirmation remains enabled. Public registration requires a configured email provider; the test accounts do not demonstrate verification of email ownership.
 
 ## Privacy and limitations
 
@@ -274,16 +281,6 @@ tests/                   Unit, database, and live checks
 .env.example              Public frontend configuration template
 vercel.json               Hosting configuration
 ```
-
-## Hackathon submission
-
-- Submit complete source through GitHub with this README and all setup files.
-- Follow the requirement to keep the repository private until the hackathon ends; it may be made public at submission. Ensure organizers can access the final source.
-- Provide reproducible setup instructions and a working real-time application. Deployment is optional in the statement, but the live URL is useful for judging.
-- Submit a PPT covering the idea, implementation, features, and product through a publicly accessible Google Drive link.
-- Submit a short working-product demonstration on YouTube with public access.
-- Verify the presentation and video links in an incognito window, and confirm the submission portal and deadline with the organizers.
-- Describe only implemented features; do not claim end-to-end encryption, recorded voice notes, or AI functionality. File sharing is implemented for private DMs and circles, with hosted verification required after setup.
 
 ## References
 
